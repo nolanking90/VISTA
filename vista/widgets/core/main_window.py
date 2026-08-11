@@ -575,6 +575,23 @@ class VistaMainWindow(QMainWindow):
         self.about_action.triggered.connect(self.show_about)
         toolbar.addAction(self.about_action)
 
+        # Lock interactive-mode actions while a panel is in an exclusive edit mode
+        self._interactive_actions = [
+            self.create_track_action,
+            self.create_detection_action,
+            self.select_track_action,
+            self.select_detections_action,
+            self.lasso_select_action,
+            self.draw_roi_action,
+        ]
+        for panel in self.data_manager.panels:
+            panel.edit_mode_changed.connect(self._on_panel_edit_mode_changed)
+
+    def _on_panel_edit_mode_changed(self, active):
+        """Disable interactive-mode toolbar actions while a panel edit mode is active."""
+        for action in self._interactive_actions:
+            action.setEnabled(not active)
+
     def create_interactive_mode_action_group(self):
         """
         Create action group for mutually exclusive interactive modes.
@@ -587,16 +604,14 @@ class VistaMainWindow(QMainWindow):
 
     def deactivate_all_interactive_modes(self, except_action=None):
         """
-        Deactivate all interactive mode actions except the specified one.
-
-        This ensures mutual exclusivity of interactive modes across
-        both toolbar actions and data panel edit buttons.
+        Deactivate all interactive mode toolbar actions except the specified one.
 
         Parameters
         ----------
         except_action : QAction or str, optional
             The action to keep active (all others will be deactivated).
-            Can be a QAction object or a string identifier for edit buttons.
+            Panel edit buttons pass string identifiers ("edit_track",
+            "edit_detector") so no toolbar action matches.
         """
         # Deactivate toolbar actions in the group
         for action in self.interactive_mode_group.actions():
@@ -622,25 +637,6 @@ class VistaMainWindow(QMainWindow):
                 action.blockSignals(True)
                 action.setChecked(False)
                 action.blockSignals(False)
-
-        # Deactivate edit buttons in data panels
-        if except_action != "edit_track":
-            if self.data_manager.tracks_panel.edit_track_btn.isChecked():
-                # Clean up track editing mode
-                self.viewer.finish_track_editing()
-                # Uncheck the button
-                self.data_manager.tracks_panel.edit_track_btn.blockSignals(True)
-                self.data_manager.tracks_panel.edit_track_btn.setChecked(False)
-                self.data_manager.tracks_panel.edit_track_btn.blockSignals(False)
-
-        if except_action != "edit_detector":
-            if self.data_manager.detections_panel.edit_detector_btn.isChecked():
-                # Clean up detector editing mode
-                self.viewer.finish_detection_editing()
-                # Uncheck the button
-                self.data_manager.detections_panel.edit_detector_btn.blockSignals(True)
-                self.data_manager.detections_panel.edit_detector_btn.setChecked(False)
-                self.data_manager.detections_panel.edit_detector_btn.blockSignals(False)
 
     def on_geolocation_toggled(self, checked):
         """Handle geolocation tooltip toggle"""
@@ -2908,6 +2904,15 @@ class VistaMainWindow(QMainWindow):
         key = event.key()
         modifiers = event.modifiers()
 
+        # Escape cancels an active panel edit mode
+        if key == Qt.Key.Key_Escape:
+            editing_panel = self.data_manager.panel_in_edit_mode()
+            if editing_panel is not None:
+                editing_panel.cancel_edit_mode()
+            else:
+                super().keyPressEvent(event)
+            return
+
         # Ctrl+Z for undo
         if key == Qt.Key.Key_Z and modifiers == Qt.KeyboardModifier.ControlModifier:
             self._handle_undo_shortcut()
@@ -2932,6 +2937,8 @@ class VistaMainWindow(QMainWindow):
 
     def _handle_undo_shortcut(self):
         """Handle Ctrl+Z by triggering undo on the appropriate panel."""
+        if self.data_manager.panel_in_edit_mode() is not None:
+            return  # panels are locked during edit mode
         current_tab_index = self.data_manager.tabs.currentIndex()
         if current_tab_index == 2:  # Tracks tab
             if self.data_manager.tracks_panel.undo_stack.can_undo():
@@ -2942,6 +2949,8 @@ class VistaMainWindow(QMainWindow):
 
     def _handle_delete_shortcut(self):
         """Handle Delete key by deleting selected items on the active panel."""
+        if self.data_manager.panel_in_edit_mode() is not None:
+            return  # panels are locked during edit mode
         current_tab_index = self.data_manager.tabs.currentIndex()
         if current_tab_index == 0:  # Sensors tab
             self.data_manager.sensors_panel.delete_selected_sensor()

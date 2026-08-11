@@ -494,7 +494,8 @@ class TracksPanel(DataPanel):
         self.edit_track_btn = QPushButton("Edit Track")
         self.edit_track_btn.setCheckable(True)
         self.edit_track_btn.setEnabled(False)  # Disabled until single track selected
-        self.edit_track_btn.clicked.connect(self.on_edit_track_clicked)
+        # toggled, so programmatic setChecked also runs the handler
+        self.edit_track_btn.toggled.connect(self.on_edit_track_toggled)
         track_actions_layout.addWidget(self.edit_track_btn)
 
         # Add extract track button
@@ -2306,9 +2307,6 @@ class TracksPanel(DataPanel):
         # Enable Edit Track and Split Track buttons only if exactly one track is selected
         self.edit_track_btn.setEnabled(num_selected == 1)
         self.split_track_btn.setEnabled(num_selected == 1)
-        # If button is checked but selection changed, uncheck it
-        if self.edit_track_btn.isChecked() and len(selected_rows) != 1:
-            self.edit_track_btn.setChecked(False)
 
         # Enable View Extraction and Edit Extraction buttons only if exactly one track with extraction is selected
         has_extraction = False
@@ -2430,8 +2428,8 @@ class TracksPanel(DataPanel):
                     self.tracks_table.selectRow(row)
                 break
 
-    def on_edit_track_clicked(self, checked):
-        """Handle Edit Track button click"""
+    def on_edit_track_toggled(self, checked):
+        """Handle Edit Track button toggle (user click or programmatic setChecked)"""
         if checked:
             # Deactivate all other interactive modes
             main_window = self.window()
@@ -2444,11 +2442,8 @@ class TracksPanel(DataPanel):
                 self.edit_track_btn.setChecked(False)
                 return
 
-            row = selected_rows[0]
-            tracker_item = self.tracks_table.item(row, 1)  # Tracker column
-            track_name_item = self.tracks_table.item(row, 2)  # Track name column
-
-            if not tracker_item or not track_name_item:
+            track_name_item = self.tracks_table.item(selected_rows[0], 2)  # Track name column
+            if not track_name_item:
                 self.edit_track_btn.setChecked(False)
                 return
 
@@ -2466,15 +2461,23 @@ class TracksPanel(DataPanel):
                 return
 
             # Start track editing mode
+            self.save_undo_state(f"Edit track '{track.name}'")
             self.viewer.start_track_editing(track)
+            self.begin_edit_mode(exempt=(self.edit_track_btn,))
+            self.edit_track_btn.setText("Finish Editing")
             self.status_message.emit(
                 f"Track editing mode: Click on frames to add/move track points for '{track.name}'. "
-                "Uncheck 'Edit Track' when finished.",
+                "Click 'Finish Editing' to save. Press Esc to cancel.",
                 0,
             )
         else:
+            if not self.viewer.track_editing_mode:
+                return  # no edit in progress (programmatic uncheck)
+
             # Finish track editing
             edited_track = self.viewer.finish_track_editing()
+            self.end_edit_mode()
+            self.edit_track_btn.setText("Edit Track")
             if edited_track:
                 self.refresh_tracks_table()
                 self.status_message.emit(
@@ -2482,6 +2485,20 @@ class TracksPanel(DataPanel):
                 )
             else:
                 self.status_message.emit("Track editing cancelled", 3000)
+
+    def cancel_edit_mode(self):
+        """Discard the in-progress track edit (Esc)."""
+        if not self.edit_mode_active:
+            return
+        # Clear the viewer mode before unchecking so the toggled handler does not commit
+        self.viewer.cancel_track_editing()
+        self.edit_track_btn.setChecked(False)
+        self.end_edit_mode()
+        self.edit_track_btn.setText("Edit Track")
+        self.status_message.emit("Track editing cancelled", 3000)
+
+    def refresh_control_states(self):
+        self.on_track_selection_changed()
 
     def manage_labels(self):
         """Open the labels manager dialog"""

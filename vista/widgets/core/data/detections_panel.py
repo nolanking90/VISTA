@@ -194,7 +194,8 @@ class DetectionsPanel(DataPanel):
         self.edit_detector_btn = QPushButton("Edit Detector")
         self.edit_detector_btn.setCheckable(True)
         self.edit_detector_btn.setEnabled(False)  # Disabled until single detector selected
-        self.edit_detector_btn.clicked.connect(self.on_edit_detector_clicked)
+        # toggled, so programmatic setChecked also runs the handler
+        self.edit_detector_btn.toggled.connect(self.on_edit_detector_toggled)
         track_from_detections_layout.addWidget(self.edit_detector_btn)
 
         # Add delete selected points button
@@ -1228,12 +1229,9 @@ class DetectionsPanel(DataPanel):
 
         # Enable Edit Detector button only if exactly one detector is selected
         self.edit_detector_btn.setEnabled(num_selected == 1)
-        # If button is checked but selection changed, uncheck it
-        if self.edit_detector_btn.isChecked() and num_selected != 1:
-            self.edit_detector_btn.setChecked(False)
 
-    def on_edit_detector_clicked(self, checked):
-        """Handle Edit Detector button click"""
+    def on_edit_detector_toggled(self, checked):
+        """Handle Edit Detector button toggle (user click or programmatic setChecked)"""
         if checked:
             # Deactivate all other interactive modes
             main_window = self.window()
@@ -1246,9 +1244,7 @@ class DetectionsPanel(DataPanel):
                 self.edit_detector_btn.setChecked(False)
                 return
 
-            row = selected_rows[0]
-            detector_name_item = self.detections_table.item(row, 1)  # Name column
-
+            detector_name_item = self.detections_table.item(selected_rows[0], 1)  # Name column
             if not detector_name_item:
                 self.edit_detector_btn.setChecked(False)
                 return
@@ -1267,15 +1263,23 @@ class DetectionsPanel(DataPanel):
                 return
 
             # Start detector editing mode
+            self.save_undo_state(f"Edit detector '{detector.name}'")
             self.viewer.start_detection_editing(detector)
+            self.begin_edit_mode(exempt=(self.edit_detector_btn,))
+            self.edit_detector_btn.setText("Finish Editing")
             self.status_message.emit(
                 "Detector editing mode: Click to add detections or click existing detections to remove them for "
-                f"'{detector.name}'. Only current frame shown. Uncheck 'Edit Detector' when finished.",
+                f"'{detector.name}'. Only current frame shown. Click 'Finish Editing' to save. Press Esc to cancel.",
                 0,
             )
         else:
+            if not self.viewer.detection_editing_mode:
+                return  # no edit in progress (programmatic uncheck)
+
             # Finish detector editing
             edited_detector = self.viewer.finish_detection_editing()
+            self.end_edit_mode()
+            self.edit_detector_btn.setText("Edit Detector")
             if edited_detector:
                 self.refresh_detections_table()
                 total_detections = len(edited_detector.frames)
@@ -1287,6 +1291,20 @@ class DetectionsPanel(DataPanel):
                 )
             else:
                 self.status_message.emit("Detector editing cancelled", 3000)
+
+    def cancel_edit_mode(self):
+        """Discard the in-progress detector edit (Esc)."""
+        if not self.edit_mode_active:
+            return
+        # Clear the viewer mode before unchecking so the toggled handler does not commit
+        self.viewer.cancel_detection_editing()
+        self.edit_detector_btn.setChecked(False)
+        self.end_edit_mode()
+        self.edit_detector_btn.setText("Edit Detector")
+        self.status_message.emit("Detector editing cancelled", 3000)
+
+    def refresh_control_states(self):
+        self.on_detector_selection_changed()
 
     def export_detections(self):
         """Export selected detections to CSV file"""

@@ -46,6 +46,19 @@ class DataManagerPanel(QWidget):
         self.aois_panel = AOIsPanel(self.viewer)
         self.features_panel = FeaturesPanel(self.viewer)
 
+        self.panels = [
+            self.sensors_panel,
+            self.imagery_panel,
+            self.tracks_panel,
+            self.detections_panel,
+            self.aois_panel,
+            self.features_panel,
+        ]
+
+        # Lock the other tabs while any panel is in an exclusive edit mode
+        for panel in self.panels:
+            panel.edit_mode_changed.connect(self._on_panel_edit_mode_changed)
+
         # Connect panel signals
         self.sensors_panel.data_changed.connect(self.on_sensor_data_changed)
         self.sensors_panel.sensor_selected.connect(self.on_sensor_selected)
@@ -65,6 +78,16 @@ class DataManagerPanel(QWidget):
 
         layout.addWidget(self.tabs)
         self.setLayout(layout)
+
+    def _on_panel_edit_mode_changed(self, active):
+        """Disable every other tab while the sending panel is in edit mode."""
+        editing_panel = self.sender()
+        for i in range(self.tabs.count()):
+            self.tabs.setTabEnabled(i, not active or self.tabs.widget(i) is editing_panel)
+
+    def panel_in_edit_mode(self):
+        """The panel currently in an exclusive edit mode, or None."""
+        return next((panel for panel in self.panels if panel.edit_mode_active), None)
 
     def on_sensor_selected(self, sensor):
         """Handle sensor selection change"""
