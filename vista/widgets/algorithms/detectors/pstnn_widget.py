@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 )
 
 from vista.algorithms.detectors.pstnn import PSTNN
-from vista.detections.detector import Detector
+from vista.detections.detector import Detector, DetectorStyle
 from vista.imagery.imagery import HAS_TORCH
 from vista.widgets.utils.algorithm_utils import create_aoi_selector, create_frame_range_spinboxes
 
@@ -187,10 +187,12 @@ class PSTNNProcessingThread(QThread):
                 rows=all_rows,
                 columns=all_columns,
                 sensor=self.imagery.sensor,
-                color=self.default_color,
-                marker=self.default_marker,
-                marker_size=self.default_marker_size,
-                visible=True,
+                style=DetectorStyle(
+                    color=self.default_color,
+                    marker=self.default_marker,
+                    marker_size=self.default_marker_size,
+                    visible=True,
+                ),
             )
 
             self.status_updated.emit("Complete")

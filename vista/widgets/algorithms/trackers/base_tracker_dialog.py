@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from vista.tracks.track import Track
+from vista.tracks.track import Track, TrackStyle
 from vista.widgets.utils.algorithm_utils import populate_detector_list_by_sensor
 
 
@@ -309,11 +309,13 @@ class BaseTrackingDialog(QDialog):
                 columns=track_data["columns"],
                 sensor=sensor,
                 tracker=tracker_name,
-                color=self.default_track_color,
-                marker=self.default_track_marker,
-                line_width=self.default_track_line_width,
-                marker_size=self.default_track_marker_size,
-                visible=True,
+                style=TrackStyle(
+                    color=self.default_track_color,
+                    marker=self.default_track_marker,
+                    line_width=self.default_track_line_width,
+                    marker_size=self.default_track_marker_size,
+                    visible=True,
+                ),
             )
             vista_tracks.append(vista_track)
             self.viewer.tracks.append(vista_track)

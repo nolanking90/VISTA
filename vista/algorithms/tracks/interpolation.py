@@ -134,18 +134,13 @@ class TrackInterpolation:
             rows=all_rows,
             columns=all_columns,
             sensor=self.track.sensor,
-            color=self.track.color,
-            marker=self.track.marker,
-            line_width=self.track.line_width,
-            marker_size=self.track.marker_size,
-            visible=self.track.visible,
-            tail_length=self.track.tail_length,
-            complete=self.track.complete,
-            show_line=self.track.show_line,
-            line_style=self.track.line_style,
-            labels=self.track.labels.copy(),
-            label_time=self.track.label_time,
-            labeler=self.track.labeler,
+            style=self.track.style.copy(),
+        )
+        # Interpolation adds points, so spread the source labels across the new length
+        interpolated_track.set_labels(
+            self.track.get_unique_labels(),
+            self.track.label_times[0] if self.track.label_times else None,
+            self.track.labelers[0] if self.track.labelers else None,
         )
 
         # Return results

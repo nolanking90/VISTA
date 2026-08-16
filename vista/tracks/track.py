@@ -6,10 +6,8 @@ across multiple frames with support for multiple coordinate systems (pixel, geod
 time-based), visualization styling, and data persistence.
 """
 
-import datetime
-import uuid
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, override
 
 import numpy as np
 import pandas as pd
@@ -17,13 +15,70 @@ import pyqtgraph as pg
 from numpy.typing import NDArray
 from PyQt6.QtCore import Qt
 
+from vista.detections.detector import Detector, DetectorStyle
 from vista.sensors.sensor import Sensor
 from vista.utils.geodetic_mapping import map_geodetic_to_pixel
 from vista.utils.time_mapping import map_times_to_frames
 
+_PEN_STYLES = {
+    "SolidLine": Qt.PenStyle.SolidLine,
+    "DashLine": Qt.PenStyle.DashLine,
+    "DotLine": Qt.PenStyle.DotLine,
+    "DashDotLine": Qt.PenStyle.DashDotLine,
+    "DashDotDotLine": Qt.PenStyle.DashDotDotLine,
+}
+
 
 @dataclass
-class Track:
+class TrackStyle(DetectorStyle):
+    color: str = "g"
+    marker_size: int = 12
+    line_width: int = 2  # Width of the line connecting track points
+    line_style: str = "SolidLine"
+    show_line: bool = True
+    tail_length: int = 0
+    show_uncertainty: bool = False  # Whether to display uncertainty ellipses
+
+    def pen(self, width=None, style=None):
+        """
+        Build a PyQtGraph pen for the line connecting track points.
+
+        Parameters
+        ----------
+        width : int, optional
+            Line width override, uses self.line_width if None
+        style : str, optional
+            Line style override, uses self.line_style if None
+
+        Returns
+        -------
+        pg.mkPen
+            PyQtGraph pen object
+        """
+
+        actual_width = width if width is not None else self.line_width
+        actual_style = style if style is not None else self.line_style
+        return pg.mkPen(
+            color=self.color,
+            width=actual_width,
+            style=_PEN_STYLES.get(actual_style, Qt.PenStyle.SolidLine),
+        )
+
+    def brush(self):
+        """
+        Build a PyQtGraph brush for the marker fill.
+
+        Returns
+        -------
+        pg.mkBrush
+            PyQtGraph brush object
+        """
+
+        return pg.mkBrush(color=self.color)
+
+
+@dataclass(eq=False, repr=False)
+class Track(Detector):
     """
     Represents a single object trajectory across multiple frames.
 
@@ -67,8 +122,8 @@ class Track:
     line_style : str, optional
         Qt line style ('SolidLine', 'DashLine', 'DotLine', 'DashDotLine',
         'DashDotDotLine'), by default 'SolidLine'
-    labels : set[str], optional
-        Set of text labels for categorizing/filtering tracks, by default empty set
+    labels : list[set[str]], optional
+        List of label sets, one set per track point, by default empty list
     extraction_metadata : dict, optional
         Extraction metadata containing image chips and signal detection results.
         Dictionary with keys: 'chip_size' (int), 'chips' (NDArray with shape
@@ -100,52 +155,20 @@ class Track:
     - Track length is computed lazily and cached for performance
     """
 
-    name: str
-    frames: NDArray[np.int_]
-    rows: NDArray[np.float64]
-    columns: NDArray[np.float64]
-    sensor: Sensor
-    # Styling attributes
-    color: str = "g"  # Green by default
-    marker: str = "o"  # Circle by default
-    line_width: int = 2
-    marker_size: int = 12
-    visible: bool = True
-    tail_length: int = 0  # 0 means show all history, >0 means show only last N frames
-    complete: bool = False  # If True, show complete track regardless of current frame and override tail_length
-    show_line: bool = True  # If True, show line connecting track points
-    line_style: str = "SolidLine"  # Line style: 'SolidLine', 'DashLine', 'DotLine', 'DashDotLine', 'DashDotDotLine'
-    labels: set[str] = field(default_factory=set)  # Set of labels for this track
-    label_time: Optional[datetime.datetime] = None  # UTC timestamp labels were last applied
-    labeler: Optional[str] = None  # Username of the person who last applied labels
+    style: TrackStyle = field(default_factory=TrackStyle)
+
     tracker: Optional[str] = None  # Name of tracker this track belongs to
+
     # Extraction metadata
     extraction_metadata: Optional[dict] = None  # Dict containing 'chip_size', 'chips', 'signal_masks', 'noise_stds'
+
     # Uncertainty visualization (2D covariance matrix: [[C00, C01], [C01, C11]])
     covariance_00: Optional[NDArray[np.float64]] = None  # Row variance (C_row_row)
     covariance_01: Optional[NDArray[np.float64]] = None  # Row-column covariance (C_row_col)
     covariance_11: Optional[NDArray[np.float64]] = None  # Column variance (C_col_col)
-    show_uncertainty: bool = False  # Whether to display uncertainty ellipses
+
     # Private attributes
     _length: int = field(init=False, default=None)
-
-    # Performance optimization: cached data structures
-    _frame_index: dict = field(default=None, init=False, repr=False)  # Frame number -> index
-    _cached_pen: object = field(default=None, init=False, repr=False)  # Cached PyQtGraph pen
-    _cached_brush: object = field(default=None, init=False, repr=False)  # Cached PyQtGraph brush
-    _pen_params: tuple = field(default=None, init=False, repr=False)  # Parameters used for cached pen
-    _brush_params: tuple = field(default=None, init=False, repr=False)  # Parameters used for cached brush
-    _cached_lons: Optional[NDArray[np.float64]] = field(default=None, init=False, repr=False)  # Cached longitude coords
-    _cached_lats: Optional[NDArray[np.float64]] = field(default=None, init=False, repr=False)  # Cached latitude coords
-    uuid: str = field(init=None, default=None)
-
-    def __post_init__(self):
-        self.uuid = uuid.uuid4()
-
-    def __eq__(self, other):
-        if not isinstance(other, Track):
-            return False
-        return self.uuid == other.uuid
 
     def __getitem__(self, s):
         if isinstance(s, slice) or isinstance(s, np.ndarray):
@@ -172,6 +195,8 @@ class Track:
             if track_slice.covariance_11 is not None:
                 track_slice.covariance_11 = track_slice.covariance_11[s]
 
+            track_slice._subset_labels(s)
+
             # Slice cached geodetic coords if present
             if track_slice._cached_lons is not None:
                 track_slice._cached_lons = track_slice._cached_lons[s]
@@ -181,18 +206,6 @@ class Track:
             return track_slice
         else:
             raise TypeError("Invalid index or slice type.")
-
-    def __len__(self):
-        return len(self.frames)
-
-    def __str__(self):
-        return self.__repr__()
-
-    def __repr__(self):
-        s = f"{self.__class__.__name__}({self.name})"
-        s += "\n" + len(s) * "-" + "\n"
-        s += str(self.to_dataframe())
-        return s
 
     def _build_frame_index(self):
         """Build index mapping frame numbers to track indices for O(1) lookup."""
@@ -235,17 +248,17 @@ class Track:
         NDArray or None
             Array of indices for visible track points, or None if no points visible
         """
-        if self.complete:
+        if self.style.complete:
             # Show entire track
             return np.arange(len(self.frames))
 
         # Find points up to current frame
         mask = self.frames <= current_frame
 
-        if self.tail_length > 0:
+        if self.style.tail_length > 0:
             # Only show last N frames
             frame_diff = current_frame - self.frames
-            mask &= (frame_diff <= self.tail_length) & (frame_diff >= 0)
+            mask &= (frame_diff <= self.style.tail_length) & (frame_diff >= 0)
 
         indices = np.where(mask)[0]
         return indices if len(indices) > 0 else None
@@ -284,70 +297,8 @@ class Track:
 
     def invalidate_caches(self):
         """Invalidate cached data structures when track data changes."""
-        self._frame_index = None
-        self._cached_pen = None
-        self._cached_brush = None
-        self._pen_params = None
-        self._brush_params = None
+        super().invalidate_caches()
         self._length = None
-        self._cached_lons = None
-        self._cached_lats = None
-
-    def get_pen(self, width=None, style=None):
-        """
-        Get cached PyQtGraph pen object, creating only if parameters changed.
-
-        Parameters
-        ----------
-        width : int, optional
-            Line width override, uses self.line_width if None
-        style : str, optional
-            Line style override, uses self.line_style if None
-
-        Returns
-        -------
-        pg.mkPen
-            PyQtGraph pen object
-        """
-
-        actual_width = width if width is not None else self.line_width
-        actual_style = style if style is not None else self.line_style
-
-        # Map string style to Qt constant
-        style_map = {
-            "SolidLine": Qt.PenStyle.SolidLine,
-            "DashLine": Qt.PenStyle.DashLine,
-            "DotLine": Qt.PenStyle.DotLine,
-            "DashDotLine": Qt.PenStyle.DashDotLine,
-            "DashDotDotLine": Qt.PenStyle.DashDotDotLine,
-        }
-        qt_style = style_map.get(actual_style, Qt.PenStyle.SolidLine)
-
-        params = (self.color, actual_width, qt_style)
-
-        if self._pen_params != params:
-            self._cached_pen = pg.mkPen(color=self.color, width=actual_width, style=qt_style)
-            self._pen_params = params
-
-        return self._cached_pen
-
-    def get_brush(self):
-        """
-        Get cached PyQtGraph brush object for marker fill, creating only if parameters changed.
-
-        Returns
-        -------
-        pg.mkBrush
-            PyQtGraph brush object
-        """
-
-        params = (self.color,)
-
-        if self._brush_params != params:
-            self._cached_brush = pg.mkBrush(color=self.color)
-            self._brush_params = params
-
-        return self._cached_brush
 
     def has_uncertainty(self) -> bool:
         """
@@ -458,7 +409,68 @@ class Track:
 
         return track_times
 
+    def copy(self):
+        """
+        Create a deep copy of this track object.
+
+        Returns
+        -------
+        Track
+            New Track object with copied arrays and styling attributes
+        """
+        # Deep copy extraction metadata if present
+        extraction_metadata_copy = None
+        if self.extraction_metadata is not None:
+            extraction_metadata_copy = {
+                "chip_size": self.extraction_metadata["chip_size"],
+                "chips": self.extraction_metadata["chips"].copy(),
+                "signal_masks": self.extraction_metadata["signal_masks"].copy(),
+                "noise_stds": self.extraction_metadata["noise_stds"].copy(),
+            }
+
+        track_copy = self.__class__(
+            name=self.name,
+            frames=self.frames.copy(),
+            rows=self.rows.copy(),
+            columns=self.columns.copy(),
+            sensor=self.sensor,
+            style=self.style.copy(),
+            **self.copy_labels(),
+            tracker=self.tracker,
+            extraction_metadata=extraction_metadata_copy,
+            covariance_00=self.covariance_00.copy() if self.covariance_00 is not None else None,
+            covariance_01=self.covariance_01.copy() if self.covariance_01 is not None else None,
+            covariance_11=self.covariance_11.copy() if self.covariance_11 is not None else None,
+        )
+        # Preserve cached geodetic coords
+        if self._cached_lons is not None:
+            track_copy._cached_lons = self._cached_lons.copy()
+        if self._cached_lats is not None:
+            track_copy._cached_lats = self._cached_lats.copy()
+        return track_copy
+
+    @property
+    def length(self):
+        """
+        Cumulative Euclidean distance along the track path.
+
+        Computes the sum of pixel distances between consecutive track points.
+        Result is cached for performance.
+
+        Returns
+        -------
+        float
+            Total track length in pixels, or 0.0 if track has fewer than 2 points
+        """
+        if self._length is None:
+            if len(self.rows) < 2:
+                self._length = 0.0
+            else:
+                self._length = np.sum(np.sqrt(np.diff(self.rows) ** 2 + np.diff(self.columns) ** 2))
+        return self._length
+
     @classmethod
+    @override
     def from_dataframe(cls, df: pd.DataFrame, sensor: Sensor, name: str = None):
         """
         Create Track from DataFrame with automatic coordinate conversion.
@@ -516,45 +528,28 @@ class Track:
             if pd.notna(tracker_val) and tracker_val:
                 tracker = str(tracker_val)
                 kwargs["tracker"] = tracker
+        style_kwargs = {}
         if "Color" in df.columns:
-            kwargs["color"] = df["Color"].iloc[0]
+            style_kwargs["color"] = df["Color"].iloc[0]
         if "Marker" in df.columns:
-            kwargs["marker"] = df["Marker"].iloc[0]
+            style_kwargs["marker"] = df["Marker"].iloc[0]
         if "Line Width" in df.columns:
-            kwargs["line_width"] = df["Line Width"].iloc[0]
+            style_kwargs["line_width"] = df["Line Width"].iloc[0]
         if "Marker Size" in df.columns:
-            kwargs["marker_size"] = df["Marker Size"].iloc[0]
+            style_kwargs["marker_size"] = df["Marker Size"].iloc[0]
         if "Tail Length" in df.columns:
-            kwargs["tail_length"] = df["Tail Length"].iloc[0]
+            style_kwargs["tail_length"] = df["Tail Length"].iloc[0]
         if "Visible" in df.columns:
-            kwargs["visible"] = df["Visible"].iloc[0]
+            style_kwargs["visible"] = df["Visible"].iloc[0]
         if "Complete" in df.columns:
-            kwargs["complete"] = df["Complete"].iloc[0]
+            style_kwargs["complete"] = df["Complete"].iloc[0]
         if "Show Line" in df.columns:
-            kwargs["show_line"] = df["Show Line"].iloc[0]
+            style_kwargs["show_line"] = df["Show Line"].iloc[0]
         if "Line Style" in df.columns:
-            kwargs["line_style"] = df["Line Style"].iloc[0]
-        if "Labels" in df.columns:
-            # Parse labels from comma-separated string
-            labels_str = df["Labels"].iloc[0]
-            if pd.notna(labels_str) and labels_str:
-                labels_str = str(
-                    labels_str
-                )  # Make sure labels are parsed as a string even if they're something like `1`
-                kwargs["labels"] = set(label.strip() for label in labels_str.split(","))
-            else:
-                kwargs["labels"] = set()
-        if "Label Time" in df.columns:
-            label_time_val = df["Label Time"].iloc[0]
-            if pd.notna(label_time_val) and label_time_val != "":
-                try:
-                    kwargs["label_time"] = pd.to_datetime(label_time_val).to_pydatetime()
-                except (ValueError, TypeError):
-                    kwargs["label_time"] = None
-        if "Labeler" in df.columns:
-            labeler_val = df["Labeler"].iloc[0]
-            if pd.notna(labeler_val) and labeler_val != "":
-                kwargs["labeler"] = str(labeler_val)
+            style_kwargs["line_style"] = df["Line Style"].iloc[0]
+        if style_kwargs:
+            kwargs["style"] = TrackStyle(**style_kwargs)
+        kwargs.update(cls._label_kwargs(df))
 
         # Handle times (optional)
         times = None
@@ -643,9 +638,9 @@ class Track:
 
         # Enable show_uncertainty by default if uncertainty data is present
         if "covariance_00" in kwargs and "covariance_01" in kwargs and "covariance_11" in kwargs:
-            # Only set to True if not already explicitly set
-            if "show_uncertainty" not in kwargs:
-                kwargs["show_uncertainty"] = True
+            if "style" not in kwargs:
+                kwargs["style"] = TrackStyle()
+            kwargs["style"].show_uncertainty = True
 
         track = cls(
             name=name,
@@ -663,101 +658,32 @@ class Track:
 
         return track
 
-    @property
-    def length(self):
-        """
-        Cumulative Euclidean distance along the track path.
-
-        Computes the sum of pixel distances between consecutive track points.
-        Result is cached for performance.
-
-        Returns
-        -------
-        float
-            Total track length in pixels, or 0.0 if track has fewer than 2 points
-        """
-        if self._length is None:
-            if len(self.rows) < 2:
-                self._length = 0.0
-            else:
-                self._length = np.sum(np.sqrt(np.diff(self.rows) ** 2 + np.diff(self.columns) ** 2))
-        return self._length
-
-    def copy(self):
-        """
-        Create a deep copy of this track object.
-
-        Returns
-        -------
-        Track
-            New Track object with copied arrays and styling attributes
-        """
-        # Deep copy extraction metadata if present
-        extraction_metadata_copy = None
-        if self.extraction_metadata is not None:
-            extraction_metadata_copy = {
-                "chip_size": self.extraction_metadata["chip_size"],
-                "chips": self.extraction_metadata["chips"].copy(),
-                "signal_masks": self.extraction_metadata["signal_masks"].copy(),
-                "noise_stds": self.extraction_metadata["noise_stds"].copy(),
-            }
-
-        track_copy = self.__class__(
-            name=self.name,
-            frames=self.frames.copy(),
-            rows=self.rows.copy(),
-            columns=self.columns.copy(),
-            sensor=self.sensor,
-            color=self.color,
-            marker=self.marker,
-            line_width=self.line_width,
-            marker_size=self.marker_size,
-            visible=self.visible,
-            tail_length=self.tail_length,
-            complete=self.complete,
-            show_line=self.show_line,
-            line_style=self.line_style,
-            labels=self.labels.copy(),
-            label_time=self.label_time,
-            labeler=self.labeler,
-            tracker=self.tracker,
-            extraction_metadata=extraction_metadata_copy,
-            covariance_00=self.covariance_00.copy() if self.covariance_00 is not None else None,
-            covariance_01=self.covariance_01.copy() if self.covariance_01 is not None else None,
-            covariance_11=self.covariance_11.copy() if self.covariance_11 is not None else None,
-            show_uncertainty=self.show_uncertainty,
-        )
-        # Preserve cached geodetic coords
-        if self._cached_lons is not None:
-            track_copy._cached_lons = self._cached_lons.copy()
-        if self._cached_lats is not None:
-            track_copy._cached_lats = self._cached_lats.copy()
-        return track_copy
-
     def to_dataframe(self) -> pd.DataFrame:
         """Convert track to DataFrame
 
         Raises:
             ValueError: If geolocation/time requested but imagery is missing required data
         """
+        labels_column, label_times_column, labelers_column = self._label_columns()
+
         data = {
             "Tracker": len(self) * [self.tracker or ""],
             "Track": len(self) * [self.name],
             "Frames": self.frames,
             "Rows": self.rows,
             "Columns": self.columns,
-            "Color": self.color,
-            "Marker": self.marker,
-            "Line Width": self.line_width,
-            "Marker Size": self.marker_size,
-            "Tail Length": self.tail_length,
-            "Visible": self.visible,
-            "Complete": self.complete,
-            "Show Line": self.show_line,
-            "Line Style": self.line_style,
-            "Labels": ", ".join(sorted(self.labels)) if self.labels else "",
-            "Label Time": self.label_time.isoformat() if self.label_time is not None else "",
-            "Labeler": self.labeler or "",
+            "Color": self.style.color,
+            "Marker": self.style.marker,
+            "Line Width": self.style.line_width,
+            "Marker Size": self.style.marker_size,
+            "Tail Length": self.style.tail_length,
+            "Visible": self.style.visible,
+            "Complete": self.style.complete,
+            "Show Line": self.style.show_line,
+            "Line Style": self.style.line_style,
+            "Labels": labels_column,
+            "Label Time": label_times_column,
+            "Labeler": labelers_column,
         }
 
         # Include geolocation if possible

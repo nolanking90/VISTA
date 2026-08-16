@@ -1,7 +1,7 @@
 import datetime
 import pathlib
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional, Union
 
 import numpy as np
@@ -10,6 +10,45 @@ import pyqtgraph as pg
 from numpy.typing import NDArray
 
 from vista.sensors.sensor import Sensor
+
+
+def _subset(values: list, s):
+    """Index a per-point list with the same slice or mask applied to the coordinate arrays."""
+    if isinstance(s, slice):
+        return values[s]
+    indices = np.where(s)[0] if s.dtype == bool else s
+    return [values[i] for i in indices]
+
+
+@dataclass
+class DetectorStyle:
+    color: str = "r"  # Red by default
+    marker: str = "o"  # Circle by default
+    marker_size: int = 10
+    line_thickness: int = 2  # Width of the line outlining each detection marker
+    visible: bool = True
+    complete: bool = False  # Show all detections across all frames (like track.complete)
+
+    def copy(self) -> "DetectorStyle":
+        """Create an independent copy."""
+        return replace(self)
+
+    def pen(self, width=None):
+        """
+        Build a PyQtGraph pen for the detection marker outline.
+
+        Parameters
+        ----------
+        width : int, optional
+            Line width override, uses self.line_thickness if None
+
+        Returns
+        -------
+        pg.mkPen
+            PyQtGraph pen object
+        """
+
+        return pg.mkPen(color=self.color, width=width if width is not None else self.line_thickness)
 
 
 @dataclass
@@ -80,14 +119,11 @@ class Detector:
     columns: NDArray[np.float64]
     sensor: Sensor
     description: str = ""
+    uuid: str = field(init=None, default=None)
 
     # Styling attributes
-    color: str = "r"  # Red by default
-    marker: str = "o"  # Circle by default
-    marker_size: int = 10
-    line_thickness: int = 2  # Line thickness for marker outline
-    visible: bool = True
-    complete: bool = False  # Show all detections across all frames (like track.complete)
+    style: DetectorStyle = field(default_factory=DetectorStyle)
+
     labels: list[set[str]] = field(default_factory=list)  # List of label sets, one per detection point
     label_times: list[Optional[datetime.datetime]] = field(
         default_factory=list
@@ -96,11 +132,8 @@ class Detector:
 
     # Performance optimization: cached data structures
     _frame_index: dict = field(default=None, init=False, repr=False)  # Frame number -> detection indices
-    _cached_pen: object = field(default=None, init=False, repr=False)  # Cached PyQtGraph pen
-    _pen_params: tuple = field(default=None, init=False, repr=False)  # Parameters used for cached pen
     _cached_lons: Optional[NDArray[np.float64]] = field(default=None, init=False, repr=False)  # Cached longitude coords
     _cached_lats: Optional[NDArray[np.float64]] = field(default=None, init=False, repr=False)  # Cached latitude coords
-    uuid: str = field(init=None, default=None)
 
     def __post_init__(self):
         self.uuid = uuid.uuid4()
@@ -109,6 +142,35 @@ class Detector:
         if not isinstance(other, Detector):
             return False
         return self.uuid == other.uuid
+
+    def __getitem__(self, s):
+        if isinstance(s, slice) or isinstance(s, np.ndarray):
+            # Handle slice objects
+            detector_slice = self.copy()
+            detector_slice.frames = detector_slice.frames[s]
+            detector_slice.rows = detector_slice.rows[s]
+            detector_slice.columns = detector_slice.columns[s]
+            detector_slice._subset_labels(s)
+            # Slice cached geodetic coords if present
+            if detector_slice._cached_lons is not None:
+                detector_slice._cached_lons = detector_slice._cached_lons[s]
+            if detector_slice._cached_lats is not None:
+                detector_slice._cached_lats = detector_slice._cached_lats[s]
+            return detector_slice
+        else:
+            raise TypeError("Invalid index or slice type.")
+
+    def __len__(self):
+        return len(self.frames)
+
+    def __str__(self):
+        return self.__repr__()
+
+    def __repr__(self):
+        s = f"{self.__class__.__name__}({self.name})"
+        s += "\n" + len(s) * "-" + "\n"
+        s += str(self.to_dataframe())
+        return s
 
     def _build_frame_index(self):
         """Build index mapping frame numbers to detection indices for O(1) lookup."""
@@ -176,103 +238,124 @@ class Detector:
     def invalidate_caches(self):
         """Invalidate cached data structures when detector data changes."""
         self._frame_index = None
-        self._cached_pen = None
-        self._pen_params = None
         self._cached_lons = None
         self._cached_lats = None
 
-    def get_pen(self, width=None, **kwargs):
+    def copy(self):
         """
-        Get cached PyQtGraph pen object, creating only if parameters changed.
-
-        Parameters
-        ----------
-        width : int, optional
-            Line width override, uses self.line_thickness if None
+        Create a deep copy of this detector object.
 
         Returns
         -------
-        pg.mkPen
-            PyQtGraph pen object
+        Detector
+            New Detector object with copied arrays and styling attributes
         """
+        detector_copy = self.__class__(
+            name=self.name,
+            frames=self.frames.copy(),
+            rows=self.rows.copy(),
+            columns=self.columns.copy(),
+            sensor=self.sensor,
+            style=self.style.copy(),
+            **self.copy_labels(),
+        )
+        # Preserve cached geodetic coords
+        if self._cached_lons is not None:
+            detector_copy._cached_lons = self._cached_lons.copy()
+        if self._cached_lats is not None:
+            detector_copy._cached_lats = self._cached_lats.copy()
+        return detector_copy
 
-        actual_width = width if width is not None else self.line_thickness
-        params = (self.color, actual_width)
+    def _subset_labels(self, s):
+        """Index the per-point label lists in place with the slice or mask used on the coordinates."""
+        if len(self.labels) > 0:
+            self.labels = _subset(self.labels, s)
+        if len(self.label_times) > 0:
+            self.label_times = _subset(self.label_times, s)
+        if len(self.labelers) > 0:
+            self.labelers = _subset(self.labelers, s)
 
-        if self._pen_params != params:
-            self._cached_pen = pg.mkPen(color=self.color, width=actual_width)
-            self._pen_params = params
-
-        return self._cached_pen
-
-    def __getitem__(self, s):
-        if isinstance(s, slice) or isinstance(s, np.ndarray):
-            # Handle slice objects
-            detector_slice = self.copy()
-            detector_slice.frames = detector_slice.frames[s]
-            detector_slice.rows = detector_slice.rows[s]
-            detector_slice.columns = detector_slice.columns[s]
-            # Subset labels if they exist
-            if len(detector_slice.labels) > 0:
-                if isinstance(s, slice):
-                    detector_slice.labels = detector_slice.labels[s]
-                else:  # numpy array boolean mask or indices
-                    detector_slice.labels = (
-                        [
-                            detector_slice.labels[i]
-                            for i in np.where(s)[0]
-                            if isinstance(s, np.ndarray) and s.dtype == bool
-                        ]
-                        if isinstance(s, np.ndarray) and s.dtype == bool
-                        else [detector_slice.labels[i] for i in s]
-                    )
-            # Subset per-detection label metadata (same indexing rules as labels)
-            if len(detector_slice.label_times) > 0:
-                if isinstance(s, slice):
-                    detector_slice.label_times = detector_slice.label_times[s]
+    @staticmethod
+    def _label_kwargs(df: pd.DataFrame) -> dict:
+        """Parse the per-point Labels / Label Time / Labeler columns into constructor kwargs."""
+        kwargs = {}
+        if "Labels" in df.columns:
+            labels_list = []
+            for labels_str in df["Labels"]:
+                if pd.notna(labels_str) and labels_str:
+                    # Coerce first so values like `1` parse as a string
+                    labels_list.append(set(label.strip() for label in str(labels_str).split(",")))
                 else:
-                    detector_slice.label_times = (
-                        [
-                            detector_slice.label_times[i]
-                            for i in np.where(s)[0]
-                            if isinstance(s, np.ndarray) and s.dtype == bool
-                        ]
-                        if isinstance(s, np.ndarray) and s.dtype == bool
-                        else [detector_slice.label_times[i] for i in s]
-                    )
-            if len(detector_slice.labelers) > 0:
-                if isinstance(s, slice):
-                    detector_slice.labelers = detector_slice.labelers[s]
+                    labels_list.append(set())
+            kwargs["labels"] = labels_list
+        if "Label Time" in df.columns:
+            label_times_list = []
+            for time_val in df["Label Time"]:
+                if pd.notna(time_val) and time_val != "":
+                    try:
+                        label_times_list.append(pd.to_datetime(time_val).to_pydatetime())
+                    except (ValueError, TypeError):
+                        label_times_list.append(None)
                 else:
-                    detector_slice.labelers = (
-                        [
-                            detector_slice.labelers[i]
-                            for i in np.where(s)[0]
-                            if isinstance(s, np.ndarray) and s.dtype == bool
-                        ]
-                        if isinstance(s, np.ndarray) and s.dtype == bool
-                        else [detector_slice.labelers[i] for i in s]
-                    )
-            # Slice cached geodetic coords if present
-            if detector_slice._cached_lons is not None:
-                detector_slice._cached_lons = detector_slice._cached_lons[s]
-            if detector_slice._cached_lats is not None:
-                detector_slice._cached_lats = detector_slice._cached_lats[s]
-            return detector_slice
-        else:
-            raise TypeError("Invalid index or slice type.")
+                    label_times_list.append(None)
+            kwargs["label_times"] = label_times_list
+        if "Labeler" in df.columns:
+            labelers_list = []
+            for labeler_val in df["Labeler"]:
+                if pd.notna(labeler_val) and labeler_val != "":
+                    labelers_list.append(str(labeler_val))
+                else:
+                    labelers_list.append(None)
+            kwargs["labelers"] = labelers_list
+        return kwargs
 
-    def __len__(self):
-        return len(self.frames)
+    def _label_columns(self) -> tuple[list[str], list[str], list[str]]:
+        """Per-point Labels / Label Time / Labeler columns, padded to len(self)."""
+        labels_column = []
+        label_times_column = []
+        labelers_column = []
+        for i in range(len(self)):
+            if i < len(self.labels) and self.labels[i]:
+                labels_column.append(", ".join(sorted(self.labels[i])))
+            else:
+                labels_column.append("")
+            if i < len(self.label_times) and self.label_times[i] is not None:
+                label_times_column.append(self.label_times[i].isoformat())
+            else:
+                label_times_column.append("")
+            if i < len(self.labelers) and self.labelers[i]:
+                labelers_column.append(self.labelers[i])
+            else:
+                labelers_column.append("")
+        return labels_column, label_times_column, labelers_column
 
-    def __str__(self):
-        return self.__repr__()
+    def copy_labels(self) -> dict:
+        """Deep copies of the per-point label lists, as constructor kwargs."""
+        return {
+            "labels": [label_set.copy() for label_set in self.labels],
+            "label_times": list(self.label_times),
+            "labelers": list(self.labelers),
+        }
 
-    def __repr__(self):
-        s = f"{self.__class__.__name__}({self.name})"
-        s += "\n" + len(s) * "-" + "\n"
-        s += str(self.to_dataframe())
-        return s
+    def set_labels(self, labels: set[str], time=None, labeler=None):
+        """Apply one label set to every point, copied so each point stays independent."""
+        self.labels = [set(labels) for _ in range(len(self))]
+        self.label_times = [time] * len(self)
+        self.labelers = [labeler] * len(self)
+
+    def get_unique_labels(self) -> set[str]:
+        """
+        Get all unique labels across all detections in this detector.
+
+        Returns
+        -------
+        set[str]
+            Set of all unique label strings used by any detection point
+        """
+        unique_labels = set()
+        for label_set in self.labels:
+            unique_labels.update(label_set)
+        return unique_labels
 
     @classmethod
     def from_dataframe(cls, df: pd.DataFrame, sensor, name: str = None):
@@ -304,46 +387,22 @@ class Detector:
         if name is None:
             name = df["Detector"][0]
         kwargs = {}
+        style_kwargs = {}
         if "Color" in df.columns:
-            kwargs["color"] = df["Color"].iloc[0]
+            style_kwargs["color"] = df["Color"].iloc[0]
         if "Marker" in df.columns:
-            kwargs["marker"] = df["Marker"].iloc[0]
+            style_kwargs["marker"] = df["Marker"].iloc[0]
         if "Marker Size" in df.columns:
-            kwargs["marker_size"] = df["Marker Size"].iloc[0]
+            style_kwargs["marker_size"] = df["Marker Size"].iloc[0]
         if "Line Thickness" in df.columns:
-            kwargs["line_thickness"] = df["Line Thickness"].iloc[0]
+            style_kwargs["line_thickness"] = df["Line Thickness"].iloc[0]
         if "Visible" in df.columns:
-            kwargs["visible"] = df["Visible"].iloc[0]
+            style_kwargs["visible"] = df["Visible"].iloc[0]
         if "Complete" in df.columns:
-            kwargs["complete"] = df["Complete"].iloc[0]
-        if "Labels" in df.columns:
-            # Parse labels from comma-separated string for each detection
-            labels_list = []
-            for labels_str in df["Labels"]:
-                if pd.notna(labels_str) and labels_str:
-                    labels_list.append(set(label.strip() for label in labels_str.split(",")))
-                else:
-                    labels_list.append(set())
-            kwargs["labels"] = labels_list
-        if "Label Time" in df.columns:
-            label_times_list = []
-            for time_val in df["Label Time"]:
-                if pd.notna(time_val) and time_val != "":
-                    try:
-                        label_times_list.append(pd.to_datetime(time_val).to_pydatetime())
-                    except (ValueError, TypeError):
-                        label_times_list.append(None)
-                else:
-                    label_times_list.append(None)
-            kwargs["label_times"] = label_times_list
-        if "Labeler" in df.columns:
-            labelers_list = []
-            for labeler_val in df["Labeler"]:
-                if pd.notna(labeler_val) and labeler_val != "":
-                    labelers_list.append(str(labeler_val))
-                else:
-                    labelers_list.append(None)
-            kwargs["labelers"] = labelers_list
+            style_kwargs["complete"] = df["Complete"].iloc[0]
+        if style_kwargs:
+            kwargs["style"] = DetectorStyle(**style_kwargs)
+        kwargs.update(cls._label_kwargs(df))
 
         detector = cls(
             name=name,
@@ -361,58 +420,11 @@ class Detector:
 
         return detector
 
-    def copy(self):
-        """
-        Create a deep copy of this detector object.
-
-        Returns
-        -------
-        Detector
-            New Detector object with copied arrays and styling attributes
-        """
-        detector_copy = self.__class__(
-            name=self.name,
-            frames=self.frames.copy(),
-            rows=self.rows.copy(),
-            columns=self.columns.copy(),
-            sensor=self.sensor,
-            color=self.color,
-            marker=self.marker,
-            marker_size=self.marker_size,
-            line_thickness=self.line_thickness,
-            visible=self.visible,
-            labels=[label_set.copy() for label_set in self.labels],
-            label_times=list(self.label_times),
-            labelers=list(self.labelers),
-        )
-        # Preserve cached geodetic coords
-        if self._cached_lons is not None:
-            detector_copy._cached_lons = self._cached_lons.copy()
-        if self._cached_lats is not None:
-            detector_copy._cached_lats = self._cached_lats.copy()
-        return detector_copy
-
     def to_csv(self, file: Union[str, pathlib.Path]):
         self.to_dataframe().to_csv(file, index=None)
 
     def to_dataframe(self) -> pd.DataFrame:
-        # Prepare labels column - one entry per detection
-        labels_column = []
-        label_times_column = []
-        labelers_column = []
-        for i in range(len(self.frames)):
-            if i < len(self.labels) and self.labels[i]:
-                labels_column.append(", ".join(sorted(self.labels[i])))
-            else:
-                labels_column.append("")
-            if i < len(self.label_times) and self.label_times[i] is not None:
-                label_times_column.append(self.label_times[i].isoformat())
-            else:
-                label_times_column.append("")
-            if i < len(self.labelers) and self.labelers[i]:
-                labelers_column.append(self.labelers[i])
-            else:
-                labelers_column.append("")
+        labels_column, label_times_column, labelers_column = self._label_columns()
 
         return pd.DataFrame(
             {
@@ -420,28 +432,14 @@ class Detector:
                 "Frames": self.frames,
                 "Rows": self.rows,
                 "Columns": self.columns,
-                "Color": self.color,
-                "Marker": self.marker,
-                "Marker Size": self.marker_size,
-                "Line Thickness": self.line_thickness,
-                "Visible": self.visible,
-                "Complete": self.complete,
+                "Color": self.style.color,
+                "Marker": self.style.marker,
+                "Marker Size": self.style.marker_size,
+                "Line Thickness": self.style.line_thickness,
+                "Visible": self.style.visible,
+                "Complete": self.style.complete,
                 "Labels": labels_column,
                 "Label Time": label_times_column,
                 "Labeler": labelers_column,
             }
         )
-
-    def get_unique_labels(self) -> set[str]:
-        """
-        Get all unique labels across all detections in this detector.
-
-        Returns
-        -------
-        set[str]
-            Set of all unique label strings used by any detection point
-        """
-        unique_labels = set()
-        for label_set in self.labels:
-            unique_labels.update(label_set)
-        return unique_labels

@@ -477,21 +477,21 @@ Customize detection appearance:
 .. code-block:: python
 
    # Change color
-   detector.color = 'g'  # Green
+   detector.style.color = 'g'  # Green
 
    # Change marker
-   detector.marker = 's'  # Square
+   detector.style.marker = 's'  # Square
    # Available: 'o' (circle), 's' (square), 't' (triangle),
    #            'd' (diamond), '+' (plus), 'x' (cross), 'star'
 
    # Change size
-   detector.marker_size = 15
+   detector.style.marker_size = 15
 
    # Change line thickness
-   detector.line_thickness = 3
+   detector.style.line_thickness = 3
 
    # Toggle visibility
-   detector.visible = False
+   detector.style.visible = False
 
 **In GUI:**
 

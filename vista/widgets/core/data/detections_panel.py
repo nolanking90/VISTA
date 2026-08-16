@@ -385,7 +385,9 @@ class DetectionsPanel(DataPanel):
                     visible_item.setFlags(
                         Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
                     )
-                    visible_item.setCheckState(Qt.CheckState.Checked if detector.visible else Qt.CheckState.Unchecked)
+                    visible_item.setCheckState(
+                        Qt.CheckState.Checked if detector.style.visible else Qt.CheckState.Unchecked
+                    )
                     self.detections_table.setItem(row, 0, visible_item)
 
                     # Name
@@ -403,23 +405,25 @@ class DetectionsPanel(DataPanel):
                     # Color
                     color_item = QTableWidgetItem()
                     color_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-                    color = pg_color_to_qcolor(detector.color)
+                    color = pg_color_to_qcolor(detector.style.color)
                     if not color.isValid():
-                        print(f"Warning: Invalid color '{detector.color}' for detector '{detector.name}', using red")
+                        print(
+                            f"Warning: Invalid color '{detector.style.color}' for detector '{detector.name}', using red"
+                        )
                         color = QColor("red")
                     color_item.setBackground(QBrush(color))
-                    color_item.setData(Qt.ItemDataRole.UserRole, detector.color)  # Store original color string
+                    color_item.setData(Qt.ItemDataRole.UserRole, detector.style.color)  # Store original color string
                     self.detections_table.setItem(row, 3, color_item)
 
                     # Marker
-                    self.detections_table.setItem(row, 4, QTableWidgetItem(str(detector.marker)))
+                    self.detections_table.setItem(row, 4, QTableWidgetItem(str(detector.style.marker)))
 
                     # Size
-                    size_item = QTableWidgetItem(str(detector.marker_size))
+                    size_item = QTableWidgetItem(str(detector.style.marker_size))
                     self.detections_table.setItem(row, 5, size_item)
 
                     # Line thickness
-                    line_thickness_item = QTableWidgetItem(str(detector.line_thickness))
+                    line_thickness_item = QTableWidgetItem(str(detector.style.line_thickness))
                     self.detections_table.setItem(row, 6, line_thickness_item)
 
                     # Complete checkbox
@@ -427,7 +431,9 @@ class DetectionsPanel(DataPanel):
                     complete_item.setFlags(
                         Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
                     )
-                    complete_item.setCheckState(Qt.CheckState.Checked if detector.complete else Qt.CheckState.Unchecked)
+                    complete_item.setCheckState(
+                        Qt.CheckState.Checked if detector.style.complete else Qt.CheckState.Unchecked
+                    )
                     self.detections_table.setItem(row, 7, complete_item)
 
                 except Exception as e:
@@ -842,7 +848,7 @@ class DetectionsPanel(DataPanel):
 
         if column == 0:  # Visible
             item = self.detections_table.item(row, column)
-            detector.visible = item.checkState() == Qt.CheckState.Checked
+            detector.style.visible = item.checkState() == Qt.CheckState.Checked
         elif column == 1:  # Name
             item = self.detections_table.item(row, column)
             detector.name = item.text()
@@ -851,29 +857,25 @@ class DetectionsPanel(DataPanel):
         elif column == 3:  # Color
             item = self.detections_table.item(row, column)
             color = item.background().color()
-            detector.color = qcolor_to_pg_color(color)
+            detector.style.color = qcolor_to_pg_color(color)
         elif column == 4:  # Marker
             item = self.detections_table.item(row, column)
-            detector.marker = item.text()
+            detector.style.marker = item.text()
         elif column == 5:  # Size
             item = self.detections_table.item(row, column)
             try:
-                detector.marker_size = int(item.text())
+                detector.style.marker_size = int(item.text())
             except ValueError:
                 pass
         elif column == 6:  # Line thickness
             item = self.detections_table.item(row, column)
             try:
-                detector.line_thickness = int(item.text())
+                detector.style.line_thickness = int(item.text())
             except ValueError:
                 pass
         elif column == 7:  # Complete
             item = self.detections_table.item(row, column)
-            detector.complete = item.checkState() == Qt.CheckState.Checked
-
-        # Invalidate caches if styling properties were modified
-        if column in [3, 4, 5, 6]:  # Color, Marker, Size, Line thickness
-            detector.invalidate_caches()
+            detector.style.complete = item.checkState() == Qt.CheckState.Checked
 
         self.data_changed.emit()
 
@@ -886,17 +888,14 @@ class DetectionsPanel(DataPanel):
             detector = self.viewer.detectors[row]
 
             # Get current color
-            current_color = pg_color_to_qcolor(detector.color)
+            current_color = pg_color_to_qcolor(detector.style.color)
 
             # Open color dialog
             color = QColorDialog.getColor(current_color, self, "Select Detector Color")
 
             if color.isValid():
                 # Update detector color
-                detector.color = qcolor_to_pg_color(color)
-
-                # Invalidate caches since color was modified
-                detector.invalidate_caches()
+                detector.style.color = qcolor_to_pg_color(color)
 
                 # Update table cell
                 item = self.detections_table.item(row, column)
@@ -1001,21 +1000,17 @@ class DetectionsPanel(DataPanel):
 
             # Apply the property change
             if property_name == "Visibility":
-                detector.visible = self.bulk_visibility_checkbox.isChecked()
+                detector.style.visible = self.bulk_visibility_checkbox.isChecked()
             elif property_name == "Complete":
-                detector.complete = self.bulk_complete_checkbox.isChecked()
+                detector.style.complete = self.bulk_complete_checkbox.isChecked()
             elif property_name == "Color":
-                detector.color = qcolor_to_pg_color(self.bulk_color)
-                detector.invalidate_caches()
+                detector.style.color = qcolor_to_pg_color(self.bulk_color)
             elif property_name == "Marker":
-                detector.marker = self.bulk_marker_combo.currentText()
-                detector.invalidate_caches()
+                detector.style.marker = self.bulk_marker_combo.currentText()
             elif property_name == "Marker Size":
-                detector.marker_size = self.bulk_marker_size_spinbox.value()
-                detector.invalidate_caches()
+                detector.style.marker_size = self.bulk_marker_size_spinbox.value()
             elif property_name == "Line Thickness":
-                detector.line_thickness = self.bulk_line_thickness_spinbox.value()
-                detector.invalidate_caches()
+                detector.style.line_thickness = self.bulk_line_thickness_spinbox.value()
             elif property_name == "Labels":
                 # Set labels on all detection points in the detector
                 n_detections = len(detector.frames)
@@ -1073,13 +1068,13 @@ class DetectionsPanel(DataPanel):
             return
 
         # Check if any selected detectors are currently visible
-        any_visible = any(detector.visible for detector in selected_detectors)
+        any_visible = any(detector.style.visible for detector in selected_detectors)
 
         # If any are visible, hide all; otherwise show all
         new_visibility = not any_visible
 
         for detector in selected_detectors:
-            detector.visible = new_visibility
+            detector.style.visible = new_visibility
 
         self.refresh_detections_table()
         self.data_changed.emit()
@@ -1919,11 +1914,7 @@ class DetectionsPanel(DataPanel):
             rows=np.array(all_rows),
             columns=np.array(all_columns),
             sensor=sensor,
-            color=first_detector.color,
-            marker=first_detector.marker,
-            marker_size=first_detector.marker_size,
-            line_thickness=first_detector.line_thickness,
-            visible=True,
+            style=first_detector.style.copy(),
             labels=all_labels,
             label_times=all_label_times,
             labelers=all_labelers,

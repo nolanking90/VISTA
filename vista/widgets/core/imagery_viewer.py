@@ -721,12 +721,12 @@ class ImageryViewer(QWidget):
                 continue
 
             # Update visibility
-            if not detector.visible:
+            if not detector.style.visible:
                 scatter.setData(x=[], y=[])  # Hide by setting empty data
                 continue
 
             # Build a boolean mask over the full detector arrays for filtering
-            if detector.complete:
+            if detector.style.complete:
                 det_mask = np.ones(len(detector.frames), dtype=bool)
             else:
                 det_mask = detector.frames == frame_num
@@ -753,10 +753,10 @@ class ImageryViewer(QWidget):
                 scatter.setData(
                     x=plot_x,
                     y=plot_y,
-                    pen=detector.get_pen(),  # Use cached pen
+                    pen=detector.style.pen(),  # Use cached pen
                     brush=None,
-                    size=detector.marker_size,
-                    symbol=detector.marker,
+                    size=detector.style.marker_size,
+                    symbol=detector.style.marker,
                 )
             else:
                 scatter.setData(x=[], y=[])  # No data at this frame or filtered out
@@ -803,15 +803,15 @@ class ImageryViewer(QWidget):
                 continue
 
             # Update visibility
-            if not track.visible:
+            if not track.style.visible:
                 path.setData(x=[], y=[])
                 marker.setData(x=[], y=[])
                 continue
 
             # Check if track is selected for highlighting
             is_selected = track_id in self.selected_track_ids
-            line_width = track.line_width + 5 if is_selected else track.line_width
-            marker_size = track.marker_size + 5 if is_selected else track.marker_size
+            line_width = track.style.line_width + 5 if is_selected else track.style.line_width
+            marker_size = track.style.marker_size + 5 if is_selected else track.style.marker_size
 
             # Use cached geodetic coords in map view (avoids re-projecting every frame)
             _map_mode = self.map_view_mode and track.sensor and track.sensor.can_geolocate()
@@ -819,7 +819,7 @@ class ImageryViewer(QWidget):
             _map_mode = geodetic is not None  # Fall back if projection fails
 
             # If track is marked as complete, show entire track regardless of current frame
-            if track.complete:
+            if track.style.complete:
                 # Get coordinates for the path
                 if _map_mode:
                     path_x, path_y = geodetic
@@ -827,11 +827,11 @@ class ImageryViewer(QWidget):
                     path_x, path_y = track.columns, track.rows
 
                 # Update track path with entire track (only if show_line is True)
-                if track.show_line:
+                if track.style.show_line:
                     path.setData(
                         x=path_x,
                         y=path_y,
-                        pen=track.get_pen(width=line_width),  # Use cached pen
+                        pen=track.style.pen(width=line_width),  # Use cached pen
                     )
                 else:
                     path.setData(x=[], y=[])  # Hide line
@@ -847,10 +847,10 @@ class ImageryViewer(QWidget):
                     marker.setData(
                         x=mx,
                         y=my,
-                        pen=track.get_pen(width=2),  # Use cached pen
-                        brush=track.get_brush(),  # Use cached brush
+                        pen=track.style.pen(width=2),  # Use cached pen
+                        brush=track.style.brush(),  # Use cached brush
                         size=marker_size,
-                        symbol=track.marker,
+                        symbol=track.style.marker,
                     )
                 else:
                     marker.setData(x=[], y=[])  # No current position
@@ -866,11 +866,11 @@ class ImageryViewer(QWidget):
                         path_x, path_y = track.columns[visible_indices], track.rows[visible_indices]
 
                     # Update track path (only if show_line is True)
-                    if track.show_line:
+                    if track.style.show_line:
                         path.setData(
                             x=path_x,
                             y=path_y,
-                            pen=track.get_pen(width=line_width),  # Use cached pen
+                            pen=track.style.pen(width=line_width),  # Use cached pen
                         )
                     else:
                         path.setData(x=[], y=[])  # Hide line
@@ -886,10 +886,10 @@ class ImageryViewer(QWidget):
                         marker.setData(
                             x=mx,
                             y=my,
-                            pen=track.get_pen(width=2),  # Use cached pen
-                            brush=track.get_brush(),  # Use cached brush
+                            pen=track.style.pen(width=2),  # Use cached pen
+                            brush=track.style.brush(),  # Use cached brush
                             size=marker_size,
-                            symbol=track.marker,
+                            symbol=track.style.marker,
                         )
                     else:
                         marker.setData(x=[], y=[])  # No current position
@@ -899,7 +899,12 @@ class ImageryViewer(QWidget):
                     marker.setData(x=[], y=[])
 
             # Render uncertainty ellipse for current frame only (hidden in map view)
-            if track.show_uncertainty and track.has_uncertainty() and track.visible and not self.map_view_mode:
+            if (
+                track.style.show_uncertainty
+                and track.has_uncertainty()
+                and track.style.visible
+                and not self.map_view_mode
+            ):
                 # Filter by sensor
                 if self.selected_sensor is not None and track.sensor != self.selected_sensor:
                     # Remove ellipse if switching sensors
@@ -957,7 +962,7 @@ class ImageryViewer(QWidget):
                             ellipse.setRotation(rot)
 
                             # Set pen style using track color and uncertainty settings
-                            pen = track.get_pen(width=uncertainty_width, style=uncertainty_style)
+                            pen = track.style.pen(width=uncertainty_width, style=uncertainty_style)
                             ellipse.setPen(pen)
 
                             # No fill brush (transparent interior)
@@ -1252,7 +1257,7 @@ class ImageryViewer(QWidget):
 
         # Check tracks (wholly contained = ALL visible points inside)
         for track in self.tracks:
-            if not track.visible:
+            if not track.style.visible:
                 continue
             if self.selected_sensor is not None and track.sensor != self.selected_sensor:
                 continue
@@ -1283,12 +1288,12 @@ class ImageryViewer(QWidget):
 
         # Check detections (visible detections based on complete mode)
         for detector in self.detectors:
-            if not detector.visible:
+            if not detector.style.visible:
                 continue
             if self.selected_sensor is not None and detector.sensor != self.selected_sensor:
                 continue
 
-            if detector.complete:
+            if detector.style.complete:
                 # Check all detections when complete mode is enabled
                 rows, cols = detector.rows, detector.columns
                 indices = np.arange(len(detector.frames))
@@ -1306,7 +1311,7 @@ class ImageryViewer(QWidget):
                     if hasattr(self, "data_manager") and self.data_manager is not None:
                         if hasattr(self.data_manager, "detections_panel"):
                             label_mask = self.data_manager.detections_panel.get_filtered_detection_mask(detector)
-                            if detector.complete:
+                            if detector.style.complete:
                                 # For complete mode, just apply label filter
                                 if np.any(label_mask):
                                     # Filter rows, cols, and indices to match label_mask
@@ -2779,16 +2784,16 @@ class ImageryViewer(QWidget):
                 closest_distance = float("inf")
 
                 for track in self.tracks:
-                    if not track.visible:
+                    if not track.style.visible:
                         continue
 
                     # Determine which points to check based on track settings
-                    if track.complete:
+                    if track.style.complete:
                         # Show all points regardless of current frame
                         frame_mask = np.ones(len(track.frames), dtype=bool)
-                    elif track.tail_length > 0:
+                    elif track.style.tail_length > 0:
                         # Show only last N frames
-                        frame_mask = track.frames >= (self.current_frame_number - track.tail_length)
+                        frame_mask = track.frames >= (self.current_frame_number - track.style.tail_length)
                         frame_mask &= track.frames <= self.current_frame_number
                     else:
                         # Show all history up to current frame
@@ -2830,7 +2835,7 @@ class ImageryViewer(QWidget):
                 closest_distance = float("inf")
 
                 for detector in self.detectors:
-                    if not detector.visible:
+                    if not detector.style.visible:
                         continue
 
                     # Filter by sensor if one is selected
@@ -2838,7 +2843,7 @@ class ImageryViewer(QWidget):
                         continue
 
                     # Get visible detections based on complete mode
-                    if detector.complete:
+                    if detector.style.complete:
                         # All detections are visible
                         rows = detector.rows
                         cols = detector.columns
@@ -2860,7 +2865,7 @@ class ImageryViewer(QWidget):
                                     label_mask = self.data_manager.detections_panel.get_filtered_detection_mask(
                                         detector
                                     )
-                                    if detector.complete:
+                                    if detector.style.complete:
                                         # For complete mode, just apply label filter
                                         if np.any(label_mask):
                                             rows = detector.rows[label_mask]

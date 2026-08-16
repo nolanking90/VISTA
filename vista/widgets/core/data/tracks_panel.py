@@ -766,7 +766,7 @@ class TracksPanel(DataPanel):
             visible_item.setFlags(
                 Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
             )
-            visible_item.setCheckState(Qt.CheckState.Checked if track.visible else Qt.CheckState.Unchecked)
+            visible_item.setCheckState(Qt.CheckState.Checked if track.style.visible else Qt.CheckState.Unchecked)
             self.tracks_table.setItem(row, 0, visible_item)
 
             # Tracker name
@@ -780,7 +780,7 @@ class TracksPanel(DataPanel):
             self.tracks_table.setItem(row, 2, track_name_item)
 
             # Labels
-            labels_text = ", ".join(sorted(track.labels)) if track.labels else ""
+            labels_text = ", ".join(sorted(track.get_unique_labels()))
             labels_item = QTableWidgetItem(labels_text)
             self.tracks_table.setItem(row, 3, labels_item)
 
@@ -792,24 +792,24 @@ class TracksPanel(DataPanel):
             # Color
             color_item = QTableWidgetItem()
             color_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-            color = pg_color_to_qcolor(track.color)
+            color = pg_color_to_qcolor(track.style.color)
             color_item.setBackground(QBrush(color))
-            color_item.setData(Qt.ItemDataRole.UserRole, track.color)
+            color_item.setData(Qt.ItemDataRole.UserRole, track.style.color)
             self.tracks_table.setItem(row, 5, color_item)
 
             # Marker
-            self.tracks_table.setItem(row, 6, QTableWidgetItem(track.marker))
+            self.tracks_table.setItem(row, 6, QTableWidgetItem(track.style.marker))
 
             # Line Width
-            width_item = QTableWidgetItem(str(track.line_width))
+            width_item = QTableWidgetItem(str(track.style.line_width))
             self.tracks_table.setItem(row, 7, width_item)
 
             # Marker Size
-            size_item = QTableWidgetItem(str(track.marker_size))
+            size_item = QTableWidgetItem(str(track.style.marker_size))
             self.tracks_table.setItem(row, 8, size_item)
 
             # Tail Length
-            tail_item = QTableWidgetItem(str(track.tail_length))
+            tail_item = QTableWidgetItem(str(track.style.tail_length))
             self.tracks_table.setItem(row, 9, tail_item)
 
             # Complete checkbox
@@ -817,7 +817,7 @@ class TracksPanel(DataPanel):
             complete_item.setFlags(
                 Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
             )
-            complete_item.setCheckState(Qt.CheckState.Checked if track.complete else Qt.CheckState.Unchecked)
+            complete_item.setCheckState(Qt.CheckState.Checked if track.style.complete else Qt.CheckState.Unchecked)
             self.tracks_table.setItem(row, 10, complete_item)
 
             # Show Line checkbox
@@ -825,11 +825,11 @@ class TracksPanel(DataPanel):
             show_line_item.setFlags(
                 Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
             )
-            show_line_item.setCheckState(Qt.CheckState.Checked if track.show_line else Qt.CheckState.Unchecked)
+            show_line_item.setCheckState(Qt.CheckState.Checked if track.style.show_line else Qt.CheckState.Unchecked)
             self.tracks_table.setItem(row, 11, show_line_item)
 
             # Line Style
-            self.tracks_table.setItem(row, 12, QTableWidgetItem(track.line_style))
+            self.tracks_table.setItem(row, 12, QTableWidgetItem(track.style.line_style))
 
             # Extracted checkbox (read-only)
             extracted_item = QTableWidgetItem()
@@ -879,7 +879,7 @@ class TracksPanel(DataPanel):
                     Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
                 )
                 show_uncertainty_item.setCheckState(
-                    Qt.CheckState.Checked if track.show_uncertainty else Qt.CheckState.Unchecked
+                    Qt.CheckState.Checked if track.style.show_uncertainty else Qt.CheckState.Unchecked
                 )
             else:
                 # Make read-only if no uncertainty data
@@ -953,7 +953,7 @@ class TracksPanel(DataPanel):
 
                 # Get the value for this column
                 if col_idx == 0:
-                    value = "True" if track.visible else "False"
+                    value = "True" if track.style.visible else "False"
                 elif col_idx == 1:
                     value = track.tracker or ""
                 elif col_idx == 2:
@@ -962,7 +962,8 @@ class TracksPanel(DataPanel):
                     # For labels, check if any filter labels intersect with track labels
                     if filter_type == "set":
                         # Check if "(No Labels)" is in filter and track has no labels
-                        has_no_labels = len(track.labels) == 0
+                        track_labels = track.get_unique_labels()
+                        has_no_labels = len(track_labels) == 0
                         no_labels_selected = "(No Labels)" in filter_values
 
                         # Remove "(No Labels)" from filter values for intersection check
@@ -974,7 +975,7 @@ class TracksPanel(DataPanel):
                         matches_filter = (has_no_labels and no_labels_selected) or (
                             not has_no_labels
                             and len(label_filter_values) > 0
-                            and track.labels.intersection(label_filter_values)
+                            and track_labels.intersection(label_filter_values)
                         )
 
                         if not matches_filter:
@@ -984,11 +985,11 @@ class TracksPanel(DataPanel):
                 elif col_idx == 4:
                     value = track.length
                 elif col_idx == 10:
-                    value = "True" if track.complete else "False"
+                    value = "True" if track.style.complete else "False"
                 elif col_idx == 11:
-                    value = "True" if track.show_line else "False"
+                    value = "True" if track.style.show_line else "False"
                 elif col_idx == 15:
-                    value = "True" if track.show_uncertainty else "False"
+                    value = "True" if track.style.show_uncertainty else "False"
                 else:
                     continue
 
@@ -1040,23 +1041,23 @@ class TracksPanel(DataPanel):
 
         def get_sort_key(track):
             if column == 0:
-                return track.visible
+                return track.style.visible
             elif column == 1:
                 return track.tracker or ""
             elif column == 2:
                 return track.name
             elif column == 3:
-                return ", ".join(sorted(track.labels)) if track.labels else ""
+                return ", ".join(sorted(track.get_unique_labels()))
             elif column == 4:
                 return track.length
             elif column == 10:
-                return track.complete
+                return track.style.complete
             elif column == 11:
-                return track.show_line
+                return track.style.show_line
             elif column == 14:
                 return self._get_track_avg_snr(track)
             elif column == 15:
-                return track.show_uncertainty
+                return track.style.show_uncertainty
             return ""
 
         reverse = order == Qt.SortOrder.DescendingOrder
@@ -1113,23 +1114,23 @@ class TracksPanel(DataPanel):
             The value to use for sorting.
         """
         if column == 0:
-            return track.visible
+            return track.style.visible
         elif column == 1:
             return track.tracker or ""
         elif column == 2:
             return track.name
         elif column == 3:
-            return ", ".join(sorted(track.labels)) if track.labels else ""
+            return ", ".join(sorted(track.get_unique_labels()))
         elif column == 4:
             return track.length
         elif column == 10:
-            return track.complete
+            return track.style.complete
         elif column == 11:
-            return track.show_line
+            return track.style.show_line
         elif column == 14:
             return self._get_track_avg_snr(track)
         elif column == 15:
-            return track.show_uncertainty
+            return track.style.show_uncertainty
         return ""
 
     def _sort_tracks_multi(self, tracks_list, sort_order):
@@ -1516,21 +1517,22 @@ class TracksPanel(DataPanel):
         has_blank_labels = False  # Track if any tracks have no labels
         for track in self.viewer.tracks:
             if column == 0:
-                unique_values.add("True" if track.visible else "False")
+                unique_values.add("True" if track.style.visible else "False")
             elif column == 1:
                 unique_values.add(track.tracker or "")
             elif column == 3:
                 # For labels, add all individual labels from all tracks
-                if len(track.labels) == 0:
+                track_labels = track.get_unique_labels()
+                if len(track_labels) == 0:
                     has_blank_labels = True
                 else:
-                    unique_values.update(track.labels)
+                    unique_values.update(track_labels)
             elif column == 10:
-                unique_values.add("True" if track.complete else "False")
+                unique_values.add("True" if track.style.complete else "False")
             elif column == 11:
-                unique_values.add("True" if track.show_line else "False")
+                unique_values.add("True" if track.style.show_line else "False")
             elif column == 15:
-                unique_values.add("True" if track.show_uncertainty else "False")
+                unique_values.add("True" if track.style.show_uncertainty else "False")
 
         # Add special "(No Labels)" option for labels column if any tracks have no labels
         if column == 3 and has_blank_labels:
@@ -1637,7 +1639,7 @@ class TracksPanel(DataPanel):
 
         if column == 0:  # Visible
             item = self.tracks_table.item(row, column)
-            track.visible = item.checkState() == Qt.CheckState.Checked
+            track.style.visible = item.checkState() == Qt.CheckState.Checked
         elif column == 1:  # Tracker
             item = self.tracks_table.item(row, column)
             new_tracker = item.text().strip() if item.text().strip() else None
@@ -1650,56 +1652,49 @@ class TracksPanel(DataPanel):
         elif column == 3:  # Labels
             item = self.tracks_table.item(row, column)
             labels_text = item.text()
-            if labels_text:
-                # Parse comma-separated labels
-                track.labels = set(label.strip() for label in labels_text.split(","))
-            else:
-                track.labels = set()
-            track.label_time = get_current_label_time()
-            track.labeler = get_current_labeler()
+            labels = set(label.strip() for label in labels_text.split(",")) if labels_text else set()
+            track.set_labels(labels, get_current_label_time(), get_current_labeler())
         elif column == 5:  # Color
             item = self.tracks_table.item(row, column)
             color = item.background().color()
-            track.color = qcolor_to_pg_color(color)
+            track.style.color = qcolor_to_pg_color(color)
         elif column == 6:  # Marker
             item = self.tracks_table.item(row, column)
-            track.marker = item.text()
+            track.style.marker = item.text()
         elif column == 7:  # Line Width
             item = self.tracks_table.item(row, column)
             try:
-                track.line_width = int(item.text())
+                track.style.line_width = int(item.text())
             except ValueError:
                 pass
         elif column == 8:  # Marker Size
             item = self.tracks_table.item(row, column)
             try:
-                track.marker_size = int(item.text())
+                track.style.marker_size = int(item.text())
             except ValueError:
                 pass
         elif column == 9:  # Tail Length
             item = self.tracks_table.item(row, column)
             try:
-                track.tail_length = int(item.text())
+                track.style.tail_length = int(item.text())
             except ValueError:
                 pass
         elif column == 10:  # Complete
             item = self.tracks_table.item(row, column)
-            track.complete = item.checkState() == Qt.CheckState.Checked
+            track.style.complete = item.checkState() == Qt.CheckState.Checked
         elif column == 11:  # Show Line
             item = self.tracks_table.item(row, column)
-            track.show_line = item.checkState() == Qt.CheckState.Checked
+            track.style.show_line = item.checkState() == Qt.CheckState.Checked
         elif column == 12:  # Line Style
             item = self.tracks_table.item(row, column)
-            track.line_style = item.text()
+            track.style.line_style = item.text()
         elif column == 15:  # Show Uncertainty
             if track.has_uncertainty():
                 item = self.tracks_table.item(row, column)
-                track.show_uncertainty = item.checkState() == Qt.CheckState.Checked
+                track.style.show_uncertainty = item.checkState() == Qt.CheckState.Checked
                 self.viewer.update_overlays()  # Refresh viewer to show/hide uncertainty ellipses
 
-        # Invalidate caches if styling properties were modified
         if column in [5, 6, 7, 8, 12]:  # Color, Marker, Line Width, Marker Size, Line Style
-            track.invalidate_caches()
             self.viewer.update_overlays()  # Refresh viewer to show styling changes
 
         self.data_changed.emit()
@@ -1727,17 +1722,14 @@ class TracksPanel(DataPanel):
                 return
 
             # Get current color
-            current_color = pg_color_to_qcolor(track.color)
+            current_color = pg_color_to_qcolor(track.style.color)
 
             # Open color dialog
             color = QColorDialog.getColor(current_color, self, "Select Track Color")
 
             if color.isValid():
                 # Update track color
-                track.color = qcolor_to_pg_color(color)
-
-                # Invalidate caches since color was modified
-                track.invalidate_caches()
+                track.style.color = qcolor_to_pg_color(color)
 
                 # Update table cell
                 item = self.tracks_table.item(row, column)
@@ -1877,36 +1869,29 @@ class TracksPanel(DataPanel):
 
             # Apply the property change
             if property_name == "Visibility":
-                track.visible = self.bulk_visibility_checkbox.isChecked()
+                track.style.visible = self.bulk_visibility_checkbox.isChecked()
             elif property_name == "Complete":
-                track.complete = self.bulk_complete_checkbox.isChecked()
+                track.style.complete = self.bulk_complete_checkbox.isChecked()
             elif property_name == "Tail Length":
-                track.tail_length = self.bulk_tail_spinbox.value()
+                track.style.tail_length = self.bulk_tail_spinbox.value()
             elif property_name == "Color":
-                track.color = qcolor_to_pg_color(self.bulk_color)
-                track.invalidate_caches()  # Color affects cached pen/brush
+                track.style.color = qcolor_to_pg_color(self.bulk_color)
             elif property_name == "Marker":
                 marker_name = self.bulk_marker_combo.currentText()
-                track.marker = marker_map.get(marker_name, "o")
-                track.invalidate_caches()  # Marker affects rendering
+                track.style.marker = marker_map.get(marker_name, "o")
             elif property_name == "Line Width":
-                track.line_width = self.bulk_line_width_spinbox.value()
-                track.invalidate_caches()  # Line width affects cached pen
+                track.style.line_width = self.bulk_line_width_spinbox.value()
             elif property_name == "Line Style":
                 style_name = self.bulk_line_style_combo.currentText()
-                track.line_style = line_style_map.get(style_name, "SolidLine")
-                track.invalidate_caches()  # Line style affects cached pen
+                track.style.line_style = line_style_map.get(style_name, "SolidLine")
             elif property_name == "Marker Size":
-                track.marker_size = self.bulk_marker_size_spinbox.value()
-                track.invalidate_caches()  # Marker size affects rendering
+                track.style.marker_size = self.bulk_marker_size_spinbox.value()
             elif property_name == "Labels":
-                track.labels = self.bulk_labels.copy()
-                track.label_time = get_current_label_time()
-                track.labeler = get_current_labeler()
+                track.set_labels(self.bulk_labels, get_current_label_time(), get_current_labeler())
             elif property_name == "Show Uncertainty":
                 # Only apply if track has uncertainty data
                 if track.has_uncertainty():
-                    track.show_uncertainty = self.bulk_show_uncertainty_checkbox.isChecked()
+                    track.style.show_uncertainty = self.bulk_show_uncertainty_checkbox.isChecked()
             elif property_name == "Tracker":
                 track.tracker = self.bulk_tracker_edit.text()
 
@@ -1991,15 +1976,7 @@ class TracksPanel(DataPanel):
             rows=combined_df["Rows"].to_numpy(),
             columns=combined_df["Columns"].to_numpy(),
             sensor=first_track.sensor,
-            color=first_track.color,
-            marker=first_track.marker,
-            line_width=first_track.line_width,
-            marker_size=first_track.marker_size,
-            visible=first_track.visible,
-            tail_length=first_track.tail_length,
-            complete=first_track.complete,
-            show_line=first_track.show_line,
-            line_style=first_track.line_style,
+            style=first_track.style.copy(),
         )
 
         # Add merged track to viewer
@@ -2903,10 +2880,7 @@ class TracksPanel(DataPanel):
                 rows=track.rows.copy(),
                 columns=track.columns.copy(),
                 sensor=track.sensor,
-                color=track.color,
-                marker=track.marker,
-                marker_size=track.marker_size,
-                visible=True,
+                style=track.style.copy(),
             )
             self.viewer.add_detector(detector)
             detectors_created += 1
@@ -2966,9 +2940,7 @@ class TracksPanel(DataPanel):
             now = get_current_label_time()
             labeler = get_current_labeler()
             for track in selected_tracks:
-                track.labels = selected_labels.copy()
-                track.label_time = now
-                track.labeler = labeler
+                track.set_labels(selected_labels, now, labeler)
 
             # Refresh the table and emit data changed
             self.refresh_tracks_table()

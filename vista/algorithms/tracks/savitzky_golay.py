@@ -138,18 +138,8 @@ class SavitzkyGolayFilter:
             rows=smoothed_rows,
             columns=smoothed_columns,
             sensor=self.track.sensor,
-            color=self.track.color,
-            marker=self.track.marker,
-            line_width=self.track.line_width,
-            marker_size=self.track.marker_size,
-            visible=self.track.visible,
-            tail_length=self.track.tail_length,
-            complete=self.track.complete,
-            show_line=self.track.show_line,
-            line_style=self.track.line_style,
-            labels=self.track.labels.copy(),
-            label_time=self.track.label_time,
-            labeler=self.track.labeler,
+            style=self.track.style.copy(),
+            **self.track.copy_labels(),
         )
 
         # Return results
