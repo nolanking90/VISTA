@@ -12,14 +12,6 @@ from numpy.typing import NDArray
 from vista.sensors.sensor import Sensor
 
 
-def _subset(values: list, s):
-    """Index a per-point list with the same slice or mask applied to the coordinate arrays."""
-    if isinstance(s, slice):
-        return values[s]
-    indices = np.where(s)[0] if s.dtype == bool else s
-    return [values[i] for i in indices]
-
-
 @dataclass
 class DetectorStyle:
     color: str = "r"  # Red by default
@@ -443,3 +435,11 @@ class Detector:
                 "Labeler": labelers_column,
             }
         )
+
+
+def _subset(values: list, s):
+    """Index a per-point list with the same slice or mask applied to the coordinate arrays."""
+    if isinstance(s, slice):
+        return values[s]
+    indices = np.where(s)[0] if s.dtype == bool else s
+    return [values[i] for i in indices]

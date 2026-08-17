@@ -8,9 +8,9 @@ created in memory, useful for debugging and interactive workflows.
 import numpy as np
 from vista.app import VistaApp
 from vista.imagery.imagery import Imagery
-from vista.detections.detector import Detector
+from vista.detections.detector import Detector, DetectorStyle
 from vista.sensors.sensor import Sensor
-from vista.tracks.track import Track
+from vista.tracks.track import Track, TrackStyle
 
 
 def create_example_sensor():
@@ -48,21 +48,15 @@ def create_example_imagery(sensor):
     for i in range(frames):
         x = int(128 + 50 * np.sin(i * 0.2))
         y = int(128 + 50 * np.cos(i * 0.2))
-        images[i, max(0, y-2):min(height, y+3), max(0, x-2):min(width, x+3)] = 200
+        images[i, max(0, y - 2) : min(height, y + 3), max(0, x - 2) : min(width, x + 3)] = 200
 
     frames_array = np.arange(frames)
 
     # Create timestamps (1 frame per 100ms)
-    start_time = np.datetime64('2024-01-01T00:00:00')
-    times = np.array([start_time + np.timedelta64(i * 100, 'ms') for i in range(frames)])
+    start_time = np.datetime64("2024-01-01T00:00:00")
+    times = np.array([start_time + np.timedelta64(i * 100, "ms") for i in range(frames)])
 
-    imagery = Imagery(
-        name="Example Imagery",
-        images=images,
-        frames=frames_array,
-        times=times,
-        sensor=sensor
-    )
+    imagery = Imagery(name="Example Imagery", images=images, frames=frames_array, times=times, sensor=sensor)
 
     return imagery
 
@@ -105,10 +99,7 @@ def create_example_detections(sensor):
         columns=np.array(all_columns),
         sensor=sensor,
         description="Detections of moving bright spot with added noise",
-        color='r',
-        marker='o',
-        marker_size=12,
-        visible=True
+        style=DetectorStyle(color="r", marker="o", marker_size=12, visible=True),
     )
 
     return detector
@@ -148,10 +139,7 @@ def create_example_tracks(sensor):
         columns=np.array(track_columns),
         sensor=sensor,
         tracker="Example Tracker",
-        color='g',
-        marker='s',
-        line_width=2,
-        marker_size=10
+        style=TrackStyle(color="g", marker="s", line_width=2, marker_size=10),
     )
 
     return track
@@ -183,12 +171,7 @@ def main():
 
     print("Launching VISTA...")
     # Approach 1: Pass sensor explicitly (recommended when sensor is created separately)
-    app = VistaApp(
-        sensors=sensor,        # Explicitly pass the sensor
-        imagery=imagery,
-        detections=detections,
-        tracks=tracks
-    )
+    app = VistaApp(imagery=imagery, detections=detections, tracks=tracks)
 
     # Alternative Approach 2 (commented out):
     # Since imagery.sensor is already set, you can omit the sensors parameter.
@@ -208,5 +191,5 @@ def main():
     app.exec()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
