@@ -105,6 +105,7 @@ class Detector:
     def __post_init__(self):
         self.uuid = uuid.uuid4()
 
+    # TODO: Test that splitting a track into detections or creating a track from detections does not reuse UUIDs.
     def __eq__(self, other):
         if not isinstance(other, Detector):
             return False

@@ -17,13 +17,14 @@ import pyqtgraph as pg
 from numpy.typing import NDArray
 from PyQt6.QtCore import Qt
 
+from vista.detections.detector import Detector
 from vista.sensors.sensor import Sensor
 from vista.utils.geodetic_mapping import map_geodetic_to_pixel
 from vista.utils.time_mapping import map_times_to_frames
 
 
-@dataclass
-class Track:
+@dataclass(eq=False)
+class Track(Detector):
     """
     Represents a single object trajectory across multiple frames.
 
@@ -100,11 +101,6 @@ class Track:
     - Track length is computed lazily and cached for performance
     """
 
-    name: str
-    frames: NDArray[np.int_]
-    rows: NDArray[np.float64]
-    columns: NDArray[np.float64]
-    sensor: Sensor
     # Styling attributes
     color: str = "g"  # Green by default
     marker: str = "o"  # Circle by default
@@ -119,33 +115,21 @@ class Track:
     label_time: Optional[datetime.datetime] = None  # UTC timestamp labels were last applied
     labeler: Optional[str] = None  # Username of the person who last applied labels
     tracker: Optional[str] = None  # Name of tracker this track belongs to
+
     # Extraction metadata
     extraction_metadata: Optional[dict] = None  # Dict containing 'chip_size', 'chips', 'signal_masks', 'noise_stds'
+
     # Uncertainty visualization (2D covariance matrix: [[C00, C01], [C01, C11]])
     covariance_00: Optional[NDArray[np.float64]] = None  # Row variance (C_row_row)
     covariance_01: Optional[NDArray[np.float64]] = None  # Row-column covariance (C_row_col)
     covariance_11: Optional[NDArray[np.float64]] = None  # Column variance (C_col_col)
     show_uncertainty: bool = False  # Whether to display uncertainty ellipses
+
     # Private attributes
     _length: int = field(init=False, default=None)
 
     # Performance optimization: cached data structures
-    _frame_index: dict = field(default=None, init=False, repr=False)  # Frame number -> index
-    _cached_pen: object = field(default=None, init=False, repr=False)  # Cached PyQtGraph pen
-    _cached_brush: object = field(default=None, init=False, repr=False)  # Cached PyQtGraph brush
-    _pen_params: tuple = field(default=None, init=False, repr=False)  # Parameters used for cached pen
     _brush_params: tuple = field(default=None, init=False, repr=False)  # Parameters used for cached brush
-    _cached_lons: Optional[NDArray[np.float64]] = field(default=None, init=False, repr=False)  # Cached longitude coords
-    _cached_lats: Optional[NDArray[np.float64]] = field(default=None, init=False, repr=False)  # Cached latitude coords
-    uuid: str = field(init=None, default=None)
-
-    def __post_init__(self):
-        self.uuid = uuid.uuid4()
-
-    def __eq__(self, other):
-        if not isinstance(other, Track):
-            return False
-        return self.uuid == other.uuid
 
     def __getitem__(self, s):
         if isinstance(s, slice) or isinstance(s, np.ndarray):
