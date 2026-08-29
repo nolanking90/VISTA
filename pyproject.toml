@@ -97,3 +97,8 @@ ignore = [
     "E501", # Line too long. Let formatter wrap lines.
 ]
 pydocstyle = { convention = "numpy" }
+# pyproject.toml
+
+[[tool.mypy.overrides]]
+module = ["pyqtgraph", "pyqtgraph.*"]
+ignore_missing_imports = true
