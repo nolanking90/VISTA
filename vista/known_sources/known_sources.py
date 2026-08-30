@@ -183,7 +183,7 @@ class KnownSources:
                     marker=self._marker,
                     marker_size=self._marker_size,
                     tracker=self.name,
-                    labels={source_type},
                 )
+                track.set_label({source_type}, None, None)
                 tracks.append(track)
         return tracks

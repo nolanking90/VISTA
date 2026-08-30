@@ -2206,9 +2206,13 @@ class ImageryViewer(QWidget):
         if editing_track and len(self.current_track_data) > 0:
             # Sort by frame number
             sorted_frames = sorted(self.current_track_data.keys())
+            labels = editing_track.label
+            label_time = editing_track.label_time
+            labeler = editing_track.labeler
             editing_track.frames = np.array(sorted_frames, dtype=np.int_)
             editing_track.rows = np.array([self.current_track_data[f][0] for f in sorted_frames])
             editing_track.columns = np.array([self.current_track_data[f][1] for f in sorted_frames])
+            editing_track.set_label(labels, label_time, labeler)
 
             # Invalidate caches since track data was modified
             editing_track.invalidate_caches()
@@ -2537,6 +2541,9 @@ class ImageryViewer(QWidget):
             editing_detector.frames = np.array(frames_list, dtype=np.int_)
             editing_detector.rows = np.array(rows_list)
             editing_detector.columns = np.array(columns_list)
+            editing_detector.labels = [set() for _ in frames_list]
+            editing_detector.label_times = [None] * len(frames_list)
+            editing_detector.labelers = [None] * len(frames_list)
 
             # Invalidate caches since detector data was modified
             editing_detector.invalidate_caches()

@@ -1781,9 +1781,13 @@ class DetectionsPanel(DataPanel):
             columns = columns[unique_mask]
 
             # Update track
+            labels = track.label
+            label_time = track.label_time
+            labeler = track.labeler
             track.frames = frames
             track.rows = rows
             track.columns = columns
+            track.set_label(labels, label_time, labeler)
 
             # Invalidate caches since track data was modified
             track.invalidate_caches()

@@ -7,23 +7,23 @@ time-based), visualization styling, and data persistence.
 """
 
 import datetime
-import uuid
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import field
+from typing import Annotated, Optional
 
 import numpy as np
 import pandas as pd
 import pyqtgraph as pg
 from numpy.typing import NDArray
+from pydantic import Field
+from pydantic.dataclasses import dataclass
 from PyQt6.QtCore import Qt
 
-from vista.detections.detector import Detector
+from vista.detections.detector import PYDANTIC_CONFIG, Detector, dataframe_field
 from vista.sensors.sensor import Sensor
 from vista.utils.geodetic_mapping import map_geodetic_to_pixel
-from vista.utils.time_mapping import map_times_to_frames
 
 
-@dataclass(eq=False)
+@dataclass(eq=False, config=PYDANTIC_CONFIG)
 class Track(Detector):
     """
     Represents a single object trajectory across multiple frames.
@@ -68,8 +68,8 @@ class Track(Detector):
     line_style : str, optional
         Qt line style ('SolidLine', 'DashLine', 'DotLine', 'DashDotLine',
         'DashDotDotLine'), by default 'SolidLine'
-    labels : set[str], optional
-        Set of text labels for categorizing/filtering tracks, by default empty set
+    labels : list[set[str]], optional
+        One set of text labels per track point, by default an empty list
     extraction_metadata : dict, optional
         Extraction metadata containing image chips and signal detection results.
         Dictionary with keys: 'chip_size' (int), 'chips' (NDArray with shape
@@ -101,40 +101,78 @@ class Track(Detector):
     - Track length is computed lazily and cached for performance
     """
 
+    name: Annotated[str, dataframe_field("name", "Track", scalar=True)]
+
     # Styling attributes
-    color: str = "g"  # Green by default
-    marker: str = "o"  # Circle by default
-    line_width: int = 2
-    marker_size: int = 12
-    visible: bool = True
-    tail_length: int = 0  # 0 means show all history, >0 means show only last N frames
-    complete: bool = False  # If True, show complete track regardless of current frame and override tail_length
-    show_line: bool = True  # If True, show line connecting track points
-    line_style: str = "SolidLine"  # Line style: 'SolidLine', 'DashLine', 'DotLine', 'DashDotLine', 'DashDotDotLine'
-    tracker: Optional[str] = None  # Name of tracker this track belongs to
+    color: str = dataframe_field("color", "Color", scalar=True, default="g")
+    line_width: int = dataframe_field("line_width", "Line Width", scalar=True, default=2)
+    marker_size: int = dataframe_field("marker_size", "Marker Size", scalar=True, default=12)
+    tail_length: int = dataframe_field("tail_length", "Tail Length", scalar=True, default=0)
+    show_line: bool = dataframe_field("show_line", "Show Line", scalar=True, default=True)
+    line_style: str = dataframe_field("line_style", "Line Style", scalar=True, default="SolidLine")
+    tracker: Optional[str] = dataframe_field("tracker", "Tracker", scalar=True, default=None)
 
     # Extraction metadata
-    extraction_metadata: Optional[dict] = None  # Dict containing 'chip_size', 'chips', 'signal_masks', 'noise_stds'
+    extraction_metadata: Optional[dict] = Field(default=None, exclude=True)
 
     # Uncertainty visualization (2D covariance matrix: [[C00, C01], [C01, C11]])
-    covariance_00: Optional[NDArray[np.float64]] = None  # Row variance (C_row_row)
-    covariance_01: Optional[NDArray[np.float64]] = None  # Row-column covariance (C_row_col)
-    covariance_11: Optional[NDArray[np.float64]] = None  # Column variance (C_col_col)
-    show_uncertainty: bool = False  # Whether to display uncertainty ellipses
+    covariance_00: Optional[NDArray[np.float64]] = dataframe_field(
+        "covariance_00", "Covariance 00", default=None, exclude=True
+    )
+    covariance_01: Optional[NDArray[np.float64]] = dataframe_field(
+        "covariance_01", "Covariance 01", default=None, exclude=True
+    )
+    covariance_11: Optional[NDArray[np.float64]] = dataframe_field(
+        "covariance_11", "Covariance 11", default=None, exclude=True
+    )
+    show_uncertainty: bool = Field(default=False, exclude=True)
 
     # Private attributes
-    _length: int = field(init=False, default=None)
+    _length: Optional[float] = field(init=False, default=None)
 
     # Performance optimization: cached data structures
-    _brush_params: tuple = field(default=None, init=False, repr=False)  # Parameters used for cached brush
+    _brush_params: Optional[tuple] = field(default=None, init=False, repr=False)  # Cached brush parameters
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        if self.labels and any(labels != self.labels[0] for labels in self.labels[1:]):
+            raise ValueError("Track labels must be identical for every point")
+        if self.label_times and any(label_time != self.label_times[0] for label_time in self.label_times[1:]):
+            raise ValueError("Track label times must be identical for every point")
+        if self.labelers and any(labeler != self.labelers[0] for labeler in self.labelers[1:]):
+            raise ValueError("Track labelers must be identical for every point")
+
+    @property
+    def label(self) -> set[str]:
+        """Return a copy of this track's labels."""
+        return self.labels[0].copy() if self.labels else set()
+
+    @property
+    def label_time(self) -> Optional[datetime.datetime]:
+        """Return when this track was last labeled."""
+        return self.label_times[0] if self.label_times else None
+
+    @property
+    def labeler(self) -> Optional[str]:
+        """Return who last labeled this track."""
+        return self.labelers[0] if self.labelers else None
+
+    def set_label(
+        self,
+        labels: set[str],
+        label_time: Optional[datetime.datetime],
+        labeler: Optional[str],
+    ) -> None:
+        """Set track-level label metadata for every point in the track."""
+        point_count = len(self)
+        self.labels = [labels.copy() for _ in range(point_count)]
+        self.label_times = [label_time] * point_count
+        self.labelers = [labeler] * point_count
 
     def __getitem__(self, s):
         if isinstance(s, slice) or isinstance(s, np.ndarray):
-            # Handle slice objects
-            track_slice = self.copy()
-            track_slice.frames = track_slice.frames[s]
-            track_slice.rows = track_slice.rows[s]
-            track_slice.columns = track_slice.columns[s]
+            track_slice = super().__getitem__(s)
 
             # Slice extraction metadata if present
             if track_slice.extraction_metadata is not None:
@@ -152,12 +190,6 @@ class Track(Detector):
                 track_slice.covariance_01 = track_slice.covariance_01[s]
             if track_slice.covariance_11 is not None:
                 track_slice.covariance_11 = track_slice.covariance_11[s]
-
-            # Slice cached geodetic coords if present
-            if track_slice._cached_lons is not None:
-                track_slice._cached_lons = track_slice._cached_lons[s]
-            if track_slice._cached_lats is not None:
-                track_slice._cached_lats = track_slice._cached_lats[s]
 
             return track_slice
         else:
@@ -448,6 +480,9 @@ class Track(Detector):
         and columns are not already present.
         """
         df = super().normalize_dataframe(df, sensor, name)
+        if "Tracker" in df.columns:
+            tracker = df["Tracker"].astype(object)
+            df["Tracker"] = tracker.where(tracker.notna() & tracker.ne(""), None)
 
         has_geodetic = (
             "Latitude (deg)" in df.columns and "Longitude (deg)" in df.columns and "Altitude (km)" in df.columns
@@ -533,32 +568,26 @@ class Track(Detector):
 
         df = cls.normalize_dataframe(df, sensor, name)
 
-        kwargs = {}
-        if "Tracker" in df.columns:
-            tracker_val = df["Tracker"].iloc[0]
-            if pd.notna(tracker_val) and tracker_val:
-                kwargs["tracker"] = str(tracker_val)
-        if "Line Width" in df.columns:
-            kwargs["line_width"] = df["Line Width"].iloc[0]
-        if "Tail Length" in df.columns:
-            kwargs["tail_length"] = df["Tail Length"].iloc[0]
-        if "Show Line" in df.columns:
-            kwargs["show_line"] = df["Show Line"].iloc[0]
-        if "Line Style" in df.columns:
-            kwargs["line_style"] = df["Line Style"].iloc[0]
-
         # Handle uncertainty data only if all three arrays contain finite values.
+        covariance_kwargs = {
+            "covariance_00": None,
+            "covariance_01": None,
+            "covariance_11": None,
+            "show_uncertainty": False,
+        }
         if "Covariance 00" in df.columns and "Covariance 01" in df.columns and "Covariance 11" in df.columns:
             cov_00 = df["Covariance 00"].to_numpy(dtype=np.float64)
             cov_01 = df["Covariance 01"].to_numpy(dtype=np.float64)
             cov_11 = df["Covariance 11"].to_numpy(dtype=np.float64)
             if np.all(np.isfinite(cov_00)) and np.all(np.isfinite(cov_01)) and np.all(np.isfinite(cov_11)):
-                kwargs["covariance_00"] = cov_00
-                kwargs["covariance_01"] = cov_01
-                kwargs["covariance_11"] = cov_11
-                kwargs["show_uncertainty"] = True
+                covariance_kwargs.update(
+                    covariance_00=cov_00,
+                    covariance_01=cov_01,
+                    covariance_11=cov_11,
+                    show_uncertainty=True,
+                )
 
-        return super()._from_normalized_dataframe(df, sensor, name, **kwargs)
+        return super()._from_normalized_dataframe(df, sensor, name, **covariance_kwargs)
 
     @property
     def length(self):
@@ -614,9 +643,6 @@ class Track(Detector):
             complete=self.complete,
             show_line=self.show_line,
             line_style=self.line_style,
-            labels=self.labels.copy(),
-            label_times=self.label_times.copy(),
-            labelers=self.labelers.copy(),
             tracker=self.tracker,
             extraction_metadata=extraction_metadata_copy,
             covariance_00=self.covariance_00.copy() if self.covariance_00 is not None else None,
@@ -624,6 +650,7 @@ class Track(Detector):
             covariance_11=self.covariance_11.copy() if self.covariance_11 is not None else None,
             show_uncertainty=self.show_uncertainty,
         )
+        track_copy.set_label(self.label, self.label_time, self.labeler)
         # Preserve cached geodetic coords
         if self._cached_lons is not None:
             track_copy._cached_lons = self._cached_lons.copy()
@@ -637,46 +664,28 @@ class Track(Detector):
         Raises:
             ValueError: If geolocation/time requested but imagery is missing required data
         """
-        data = {
-            "Tracker": len(self) * [self.tracker or ""],
-            "Track": len(self) * [self.name],
-            "Frames": self.frames,
-            "Rows": self.rows,
-            "Columns": self.columns,
-            "Color": self.color,
-            "Marker": self.marker,
-            "Line Width": self.line_width,
-            "Marker Size": self.marker_size,
-            "Tail Length": self.tail_length,
-            "Visible": self.visible,
-            "Complete": self.complete,
-            "Show Line": self.show_line,
-            "Line Style": self.line_style,
-            "Labels": ", ".join(sorted(self.labels)) if self.labels else "",
-            "Label Time": self.label_time.isoformat() if self.label_time is not None else "",
-            "Labeler": self.labeler or "",
-        }
+        df = super().to_dataframe().drop(columns="Line Thickness")
 
         # Include geolocation if possible
         geodetic = self.get_geodetic_coords()
 
         if geodetic is not None:
-            data["Longitude (deg)"] = geodetic[0]
-            data["Latitude (deg)"] = geodetic[1]
+            df["Longitude (deg)"] = geodetic[0]
+            df["Latitude (deg)"] = geodetic[1]
 
             # Single vectorized call for altitude
             locations = self.sensor.pixel_to_geodetic(self.frames, self.rows, self.columns)
-            data["Altitude (km)"] = np.asarray(locations.height.to("km").value)
+            df["Altitude (km)"] = np.asarray(locations.height.to("km").value)
         else:
             # Sensor cannot geolocate - fill with NaN
-            data["Latitude (deg)"] = np.full(len(self.frames), np.nan)
-            data["Longitude (deg)"] = np.full(len(self.frames), np.nan)
-            data["Altitude (km)"] = np.full(len(self.frames), np.nan)
+            df["Latitude (deg)"] = np.full(len(self.frames), np.nan)
+            df["Longitude (deg)"] = np.full(len(self.frames), np.nan)
+            df["Altitude (km)"] = np.full(len(self.frames), np.nan)
 
         # Include times if possible
         track_times = self.get_times()
         if track_times is not None:
-            data["Times"] = pd.to_datetime(track_times).strftime("%Y-%m-%dT%H:%M:%S.%f")
+            df["Times"] = pd.to_datetime(track_times).strftime("%Y-%m-%dT%H:%M:%S.%f")
 
         # Include extraction metadata if present
         if self.extraction_metadata is not None:
@@ -685,15 +694,15 @@ class Track(Detector):
             noise = self.extraction_metadata.get("noise_stds")
 
             if chips is not None and masks is not None:
-                data["Signal Total"] = np.sum(chips * masks, axis=(1, 2))
-                data["Signal Pixels"] = np.sum(masks, axis=(1, 2)).astype(float)
+                df["Signal Total"] = np.sum(chips * masks, axis=(1, 2))
+                df["Signal Pixels"] = np.sum(masks, axis=(1, 2)).astype(float)
             if noise is not None:
-                data["Noise Std"] = noise
+                df["Noise Std"] = noise
 
         # Include uncertainty data if present
         if self.has_uncertainty():
-            data["Covariance 00"] = self.covariance_00
-            data["Covariance 01"] = self.covariance_01
-            data["Covariance 11"] = self.covariance_11
+            df["Covariance 00"] = self.covariance_00
+            df["Covariance 01"] = self.covariance_01
+            df["Covariance 11"] = self.covariance_11
 
-        return pd.DataFrame(data)
+        return df

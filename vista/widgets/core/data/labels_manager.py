@@ -162,8 +162,7 @@ class LabelsManagerDialog(QDialog):
                 deleted_labels_set = set(label_names)
                 # Remove from tracks
                 for track in self.viewer.tracks:
-                    # Remove any deleted labels from this track's label set
-                    track.labels = track.labels - deleted_labels_set
+                    track.set_label(track.label - deleted_labels_set, track.label_time, track.labeler)
                 # Remove from detections (per-detection labels)
                 for detector in self.viewer.detectors:
                     # Remove deleted labels from each detection point in this detector

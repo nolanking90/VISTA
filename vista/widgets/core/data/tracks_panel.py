@@ -780,7 +780,8 @@ class TracksPanel(DataPanel):
             self.tracks_table.setItem(row, 2, track_name_item)
 
             # Labels
-            labels_text = ", ".join(sorted(track.labels)) if track.labels else ""
+            labels = track.label
+            labels_text = ", ".join(sorted(labels)) if labels else ""
             labels_item = QTableWidgetItem(labels_text)
             self.tracks_table.setItem(row, 3, labels_item)
 
@@ -962,7 +963,8 @@ class TracksPanel(DataPanel):
                     # For labels, check if any filter labels intersect with track labels
                     if filter_type == "set":
                         # Check if "(No Labels)" is in filter and track has no labels
-                        has_no_labels = len(track.labels) == 0
+                        labels = track.label
+                        has_no_labels = len(labels) == 0
                         no_labels_selected = "(No Labels)" in filter_values
 
                         # Remove "(No Labels)" from filter values for intersection check
@@ -974,7 +976,7 @@ class TracksPanel(DataPanel):
                         matches_filter = (has_no_labels and no_labels_selected) or (
                             not has_no_labels
                             and len(label_filter_values) > 0
-                            and track.labels.intersection(label_filter_values)
+                            and labels.intersection(label_filter_values)
                         )
 
                         if not matches_filter:
@@ -1046,7 +1048,8 @@ class TracksPanel(DataPanel):
             elif column == 2:
                 return track.name
             elif column == 3:
-                return ", ".join(sorted(track.labels)) if track.labels else ""
+                labels = track.label
+                return ", ".join(sorted(labels)) if labels else ""
             elif column == 4:
                 return track.length
             elif column == 10:
@@ -1119,7 +1122,8 @@ class TracksPanel(DataPanel):
         elif column == 2:
             return track.name
         elif column == 3:
-            return ", ".join(sorted(track.labels)) if track.labels else ""
+            labels = track.label
+            return ", ".join(sorted(labels)) if labels else ""
         elif column == 4:
             return track.length
         elif column == 10:
@@ -1521,10 +1525,11 @@ class TracksPanel(DataPanel):
                 unique_values.add(track.tracker or "")
             elif column == 3:
                 # For labels, add all individual labels from all tracks
-                if len(track.labels) == 0:
+                labels = track.label
+                if len(labels) == 0:
                     has_blank_labels = True
                 else:
-                    unique_values.update(track.labels)
+                    unique_values.update(labels)
             elif column == 10:
                 unique_values.add("True" if track.complete else "False")
             elif column == 11:
@@ -1650,13 +1655,8 @@ class TracksPanel(DataPanel):
         elif column == 3:  # Labels
             item = self.tracks_table.item(row, column)
             labels_text = item.text()
-            if labels_text:
-                # Parse comma-separated labels
-                track.labels = set(label.strip() for label in labels_text.split(","))
-            else:
-                track.labels = set()
-            track.label_time = get_current_label_time()
-            track.labeler = get_current_labeler()
+            labels = {label.strip() for label in labels_text.split(",") if label.strip()}
+            track.set_label(labels, get_current_label_time(), get_current_labeler())
         elif column == 5:  # Color
             item = self.tracks_table.item(row, column)
             color = item.background().color()
@@ -1898,9 +1898,7 @@ class TracksPanel(DataPanel):
                 track.marker_size = self.bulk_marker_size_spinbox.value()
                 track.invalidate_caches()  # Marker size affects rendering
             elif property_name == "Labels":
-                track.labels = self.bulk_labels.copy()
-                track.label_time = get_current_label_time()
-                track.labeler = get_current_labeler()
+                track.set_label(self.bulk_labels, get_current_label_time(), get_current_labeler())
             elif property_name == "Show Uncertainty":
                 # Only apply if track has uncertainty data
                 if track.has_uncertainty():
@@ -2950,9 +2948,7 @@ class TracksPanel(DataPanel):
             now = get_current_label_time()
             labeler = get_current_labeler()
             for track in selected_tracks:
-                track.labels = selected_labels.copy()
-                track.label_time = now
-                track.labeler = labeler
+                track.set_label(selected_labels, now, labeler)
 
             # Refresh the table and emit data changed
             self.refresh_tracks_table()

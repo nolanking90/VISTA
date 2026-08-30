@@ -1,19 +1,37 @@
 import datetime
 import pathlib
-import uuid
-from dataclasses import dataclass, field
-from typing import Optional, Union
+import uuid as uuid_module
+from dataclasses import field, fields
+from typing import TYPE_CHECKING, Annotated, ClassVar, Optional, Self, Union
 
 import numpy as np
 import pandas as pd
 import pyqtgraph as pg
 from numpy.typing import NDArray
+from pydantic import AliasChoices, AliasPath, ConfigDict, Field, SkipValidation, TypeAdapter, field_serializer
+from pydantic import field_validator as pydantic_field_validator
+from pydantic.dataclasses import dataclass
 
 from vista.sensors.sensor import Sensor
 from vista.utils.time_mapping import map_times_to_frames
 
+if TYPE_CHECKING:
+    from pydantic.fields import FieldInfo
 
-@dataclass
+PYDANTIC_CONFIG = ConfigDict(arbitrary_types_allowed=True, extra="forbid", validate_by_name=True)
+
+
+def dataframe_field(field_name: str, column_name: str, *, scalar: bool = False, **kwargs):
+    """Declare how a dataclass field is represented in a DataFrame."""
+    dataframe_alias = AliasPath(column_name, 0) if scalar else column_name
+    return Field(
+        validation_alias=AliasChoices(field_name, dataframe_alias),
+        serialization_alias=column_name,
+        **kwargs,
+    )
+
+
+@dataclass(config=PYDANTIC_CONFIG)
 class Detector:
     """
     Collection of detection points from a detection algorithm or manual creation.
@@ -75,36 +93,89 @@ class Detector:
     - Detection coordinates are always in pixel space (row/column)
     """
 
-    name: str
-    frames: NDArray[np.int_]
-    rows: NDArray[np.float64]
-    columns: NDArray[np.float64]
-    sensor: Sensor
-    description: str = ""
+    if TYPE_CHECKING:
+        __pydantic_fields__: ClassVar[dict[str, FieldInfo]]
+
+    name: Annotated[str, dataframe_field("name", "Detector", scalar=True)]
+    frames: Annotated[NDArray[np.int_], dataframe_field("frames", "Frames")]
+    rows: Annotated[NDArray[np.float64], dataframe_field("rows", "Rows")]
+    columns: Annotated[NDArray[np.float64], dataframe_field("columns", "Columns")]
+    sensor: Annotated[SkipValidation[Sensor], Field(exclude=True)]
+    description: str = Field(default="", exclude=True)
 
     # Styling attributes
-    color: str = "r"  # Red by default
-    marker: str = "o"  # Circle by default
-    marker_size: int = 10
-    line_thickness: int = 2  # Line thickness for marker outline
-    visible: bool = True
-    complete: bool = False  # Show all detections across all frames (like track.complete)
-    labels: list[set[str]] = field(default_factory=list)  # List of label sets, one per detection point
-    label_times: list[Optional[datetime.datetime]] = field(
-        default_factory=list
-    )  # UTC timestamp each detection was last labeled
-    labelers: list[Optional[str]] = field(default_factory=list)  # Username that last labeled each detection
+    color: str = dataframe_field("color", "Color", scalar=True, default="r")  # Red by default
+    marker: str = dataframe_field("marker", "Marker", scalar=True, default="o")  # Circle by default
+    marker_size: int = dataframe_field("marker_size", "Marker Size", scalar=True, default=10)
+    line_thickness: int = dataframe_field("line_thickness", "Line Thickness", scalar=True, default=2)
+    visible: bool = dataframe_field("visible", "Visible", scalar=True, default=True)
+    complete: bool = dataframe_field("complete", "Complete", scalar=True, default=False)
+
+    labels: list[set[str]] = dataframe_field("labels", "Labels", default_factory=list)
+    label_times: list[Optional[datetime.datetime]] = dataframe_field(
+        "label_times",
+        "Label Time",
+        default_factory=list,
+    )
+    labelers: list[Optional[str]] = dataframe_field("labelers", "Labeler", default_factory=list)
 
     # Performance optimization: cached data structures
-    _frame_index: dict = field(default=None, init=False, repr=False)  # Frame number -> detection indices
+    _frame_index: Optional[dict] = field(default=None, init=False, repr=False)  # Frame number -> detection indices
     _cached_pen: object = field(default=None, init=False, repr=False)  # Cached PyQtGraph pen
-    _pen_params: tuple = field(default=None, init=False, repr=False)  # Parameters used for cached pen
+    _pen_params: Optional[tuple] = field(default=None, init=False, repr=False)  # Parameters used for cached pen
     _cached_lons: Optional[NDArray[np.float64]] = field(default=None, init=False, repr=False)  # Cached longitude coords
     _cached_lats: Optional[NDArray[np.float64]] = field(default=None, init=False, repr=False)  # Cached latitude coords
-    uuid: str = field(init=None, default=None)
+    uuid: Optional[uuid_module.UUID] = field(init=False, default=None)
+
+    @pydantic_field_validator("labels", mode="before")
+    @classmethod
+    def _parse_labels(cls, value, info):
+        point_count = len(info.data.get("frames", []))
+        if isinstance(value, set):
+            values = [value.copy() for _ in range(point_count)]
+        elif isinstance(value, (str, bytes)) or not hasattr(value, "__iter__"):
+            values = [value] * point_count
+        else:
+            values = list(value)
+
+        labels = []
+        for item in values:
+            if isinstance(item, set):
+                labels.append(item.copy())
+            elif item is None or (not isinstance(item, (list, tuple, set, dict)) and pd.isna(item)):
+                labels.append(set())
+            elif isinstance(item, str):
+                labels.append({label.strip() for label in item.split(",") if label.strip()})
+            else:
+                labels.append(set(item))
+        return labels
+
+    @field_serializer("labels")
+    def _serialize_labels(self, value):
+        return [", ".join(sorted(labels)) for labels in value]
+
+    @field_serializer("label_times")
+    def _serialize_label_times(self, value):
+        return [label_time.isoformat() if label_time is not None else "" for label_time in value]
+
+    @field_serializer("labelers")
+    def _serialize_labelers(self, value):
+        return [labeler or "" for labeler in value]
 
     def __post_init__(self):
-        self.uuid = uuid.uuid4()
+        point_count = len(self.frames)
+        if not self.labels:
+            self.labels = [set() for _ in range(point_count)]
+        if not self.label_times:
+            self.label_times = [None] * point_count
+        if not self.labelers:
+            self.labelers = [None] * point_count
+
+        for field_name in ("labels", "label_times", "labelers"):
+            if len(getattr(self, field_name)) != point_count:
+                raise ValueError(f"{field_name} must contain one value per point")
+
+        self.uuid = uuid_module.uuid4()
 
     # TODO: Test that splitting a track into detections or creating a track from detections does not reuse UUIDs.
     def __eq__(self, other):
@@ -278,15 +349,9 @@ class Detector:
 
     @classmethod
     def normalize_dataframe(cls, df: pd.DataFrame, sensor: Sensor, name: str) -> pd.DataFrame:
-        """Normalize temporal coordinates to a ``Frames`` column.
+        """Return a copy with times mapped to frames and blank label metadata normalized.
 
-        ``Frames`` takes precedence when both frames and times are present. If
-        only ``Times`` is present, rows outside the sensor's imagery time bounds
-        are removed before the remaining times are mapped to frames.
-
-        The returned DataFrame is an independent copy. Spatial coordinates are
-        intentionally left to the caller: detectors require existing ``Rows``
-        and ``Columns`` columns, while subclasses may derive them.
+        Rows outside the sensor's time bounds are dropped; spatial coordinates are unchanged.
         """
 
         df = df.copy()
@@ -314,6 +379,10 @@ class Detector:
             raise ValueError(f"{cls.__name__} '{name}' must have either 'Frames' or 'Times' column")
 
         df["Frames"] = frames
+        for column in ("Label Time", "Labeler"):
+            if column in df.columns:
+                values = df[column].astype(object)
+                df[column] = values.where(values.notna() & values.ne(""), None)
         return df
 
     @classmethod
@@ -323,68 +392,20 @@ class Detector:
         sensor,
         name: str,
         **additional_kwargs,
-    ):
+    ) -> Self:
         """Construct an instance from normalized frame and pixel coordinates."""
-        from typing import Any
-
         required_columns = {"Frames", "Rows", "Columns"}
         missing_columns = required_columns - set(df.columns)
         if missing_columns:
             missing = ", ".join(sorted(missing_columns))
             raise ValueError(f"{cls.__name__} '{name}' is missing required columns: {missing}")
 
-        kwargs: dict[str, Any] = {}
-        if "Color" in df.columns:
-            kwargs["color"] = df["Color"].iloc[0]
-        if "Marker" in df.columns:
-            kwargs["marker"] = df["Marker"].iloc[0]
-        if "Marker Size" in df.columns:
-            kwargs["marker_size"] = df["Marker Size"].iloc[0]
-        if "Line Thickness" in df.columns:
-            kwargs["line_thickness"] = df["Line Thickness"].iloc[0]
-        if "Visible" in df.columns:
-            kwargs["visible"] = df["Visible"].iloc[0]
-        if "Complete" in df.columns:
-            kwargs["complete"] = df["Complete"].iloc[0]
-        if "Labels" in df.columns:
-            # Parse labels from comma-separated string for each detection
-            labels_list = []
-            for labels_str in df["Labels"]:
-                if pd.notna(labels_str) and labels_str:
-                    labels_list.append(set(label.strip() for label in str(labels_str).split(",")))
-                else:
-                    labels_list.append(set())
-            kwargs["labels"] = labels_list
-        if "Label Time" in df.columns:
-            label_times_list = []
-            for time_val in df["Label Time"]:
-                if pd.notna(time_val) and time_val != "":
-                    try:
-                        label_times_list.append(pd.to_datetime(time_val).to_pydatetime())
-                    except (ValueError, TypeError):
-                        label_times_list.append(None)
-                else:
-                    label_times_list.append(None)
-            kwargs["label_times"] = label_times_list
-        if "Labeler" in df.columns:
-            labelers_list = []
-            for labeler_val in df["Labeler"]:
-                if pd.notna(labeler_val) and labeler_val != "":
-                    labelers_list.append(str(labeler_val))
-                else:
-                    labelers_list.append(None)
-            kwargs["labelers"] = labelers_list
-
-        kwargs.update(additional_kwargs)
-
-        detector = cls(
-            name=name,
-            frames=df["Frames"].to_numpy(),
-            rows=df["Rows"].to_numpy(),
-            columns=df["Columns"].to_numpy(),
-            sensor=sensor,
-            **kwargs,
-        )
+        data = {"name": name, "sensor": sensor, **additional_kwargs}
+        for field_name, field_info in cls.__pydantic_fields__.items():
+            column = field_info.serialization_alias
+            if field_name not in data and column is not None and column in df.columns:
+                data[column] = df[column].to_numpy()
+        detector = TypeAdapter(cls).validate_python(data)
 
         # Pre-populate geodetic cache if coords were available in the dataframe
         if "Latitude (deg)" in df.columns and "Longitude (deg)" in df.columns:
@@ -458,44 +479,12 @@ class Detector:
         return detector_copy
 
     def to_csv(self, file: Union[str, pathlib.Path]):
-        self.to_dataframe().to_csv(file, index=None)
+        self.to_dataframe().to_csv(file, index=False)
 
     def to_dataframe(self) -> pd.DataFrame:
-        # Prepare labels column - one entry per detection
-        labels_column = []
-        label_times_column = []
-        labelers_column = []
-        for i in range(len(self.frames)):
-            if i < len(self.labels) and self.labels[i]:
-                labels_column.append(", ".join(sorted(self.labels[i])))
-            else:
-                labels_column.append("")
-            if i < len(self.label_times) and self.label_times[i] is not None:
-                label_times_column.append(self.label_times[i].isoformat())
-            else:
-                label_times_column.append("")
-            if i < len(self.labelers) and self.labelers[i]:
-                labelers_column.append(self.labelers[i])
-            else:
-                labelers_column.append("")
-
-        return pd.DataFrame(
-            {
-                "Detector": len(self) * [self.name],
-                "Frames": self.frames,
-                "Rows": self.rows,
-                "Columns": self.columns,
-                "Color": self.color,
-                "Marker": self.marker,
-                "Marker Size": self.marker_size,
-                "Line Thickness": self.line_thickness,
-                "Visible": self.visible,
-                "Complete": self.complete,
-                "Labels": labels_column,
-                "Label Time": label_times_column,
-                "Labeler": labelers_column,
-            }
-        )
+        generated_fields = {data_field.name for data_field in fields(self) if not data_field.init}
+        data = TypeAdapter(type(self)).dump_python(self, by_alias=True, exclude=generated_fields)
+        return pd.DataFrame(data)
 
     def get_unique_labels(self) -> set[str]:
         """
@@ -504,7 +493,6 @@ class Detector:
         Returns
         -------
         set[str]
-            Set of all unique label strings used by any detection point
         """
         unique_labels = set()
         for label_set in self.labels:

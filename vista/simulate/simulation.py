@@ -676,9 +676,13 @@ class Simulation:
                 # Simulate detections of this tracker's tracks
                 for detector in self.detectors:
                     detected_frames = np.random.rand(len(frames), 1).squeeze() < self.detection_prob
+                    added_count = int(np.count_nonzero(detected_frames))
                     detector.frames = np.concatenate((detector.frames, frames[detected_frames]))
                     detector.rows = np.concatenate((detector.rows, rows[detected_frames]))
                     detector.columns = np.concatenate((detector.columns, columns[detected_frames]))
+                    detector.labels.extend(set() for _ in range(added_count))
+                    detector.label_times.extend([None] * added_count)
+                    detector.labelers.extend([None] * added_count)
 
         # Create imagery with sensor reference (sensor was created at the beginning)
         self.imagery = Imagery(

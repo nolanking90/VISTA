@@ -34,7 +34,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Visualization",
     "Environment :: X11 Applications :: Qt",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 dependencies = [
     "astropy",
     "astroquery",
@@ -43,6 +43,7 @@ dependencies = [
     "numpy",
     "pandas",
     "Pillow",
+    "pydantic>=2",
     "PyQt6",
     "pyqtgraph",
     "pyshp",

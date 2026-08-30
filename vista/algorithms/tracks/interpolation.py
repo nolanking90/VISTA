@@ -143,10 +143,8 @@ class TrackInterpolation:
             complete=self.track.complete,
             show_line=self.track.show_line,
             line_style=self.track.line_style,
-            labels=self.track.labels.copy(),
-            label_time=self.track.label_time,
-            labeler=self.track.labeler,
         )
+        interpolated_track.set_label(self.track.label, self.track.label_time, self.track.labeler)
 
         # Return results
         return {
