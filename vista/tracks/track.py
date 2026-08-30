@@ -496,15 +496,18 @@ class Track(Detector):
         df = super().to_dataframe().drop(columns="Line Thickness")
 
         # Include geolocation if possible
-        geodetic = self.get_geodetic_coords()
-
-        if geodetic is not None:
-            df["Longitude (deg)"] = geodetic[0]
-            df["Latitude (deg)"] = geodetic[1]
-
-            # Single vectorized call for altitude
+        if self.sensor and self.sensor.can_geolocate():
             locations = self.sensor.pixel_to_geodetic(self.frames, self.rows, self.columns)
-            df["Altitude (km)"] = np.asarray(locations.height.to("km").value)
+            lons = np.asarray(locations.lon.deg, dtype=np.float64)
+            lats = np.asarray(locations.lat.deg, dtype=np.float64)
+
+            invalid = (locations.y.value == 0) & (locations.z.value == 0)
+            lons[invalid] = np.nan
+            lats[invalid] = np.nan
+
+            df["Longitude (deg)"] = lons
+            df["Latitude (deg)"] = lats
+            df["Altitude (km)"] = np.asarray(locations.height.to("km").value, dtype=np.float64)
         else:
             # Sensor cannot geolocate - fill with NaN
             df["Latitude (deg)"] = np.full(len(self.frames), np.nan)
