@@ -22,7 +22,16 @@ class SensorStub(Sensor):
         return np.array([], dtype=np.int64), np.array([], dtype="datetime64[ns]")
 
 
+class TimedSensorStub(SensorStub):
+    def get_imagery_frames_and_times(self):
+        return np.array([2, 4, 8], dtype=np.int64), np.array(
+            ["2025-01-02T03:04:05", "2025-01-02T03:04:06", "2025-01-02T03:04:07"],
+            dtype="datetime64[ns]",
+        )
+
+
 SENSOR = SensorStub(name="test-sensor")
+TIMED_SENSOR = TimedSensorStub(name="timed-test-sensor")
 
 
 def assert_init_fields_equal(actual, expected):
@@ -89,6 +98,27 @@ def test_detector_dataframe_round_trip():
 
     restored = Detector.from_dataframe(original.to_dataframe(), SENSOR)
 
+    assert_init_fields_equal(restored, original)
+
+
+@pytest.mark.parametrize("object_type", [Detector, Track])
+def test_dataframe_time_round_trip(object_type: type[Detector]):
+    original = object_type(
+        name="time-round-trip",
+        frames=np.array([2, 4, 8], dtype=np.int64),
+        rows=np.array([12.5, 24.0, 48.75]),
+        columns=np.array([120.0, 240.25, 480.5]),
+        sensor=TIMED_SENSOR,
+    )
+
+    df = original.to_dataframe()
+    assert df["Times"].tolist() == [
+        "2025-01-02T03:04:05.000000",
+        "2025-01-02T03:04:06.000000",
+        "2025-01-02T03:04:07.000000",
+    ]
+
+    restored = object_type.from_dataframe(df.drop(columns="Frames"), TIMED_SENSOR)
     assert_init_fields_equal(restored, original)
 
 

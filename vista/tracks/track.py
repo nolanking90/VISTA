@@ -383,43 +383,6 @@ class Track(Detector):
         det = self.covariance_00 * self.covariance_11 - self.covariance_01**2
         return np.sqrt(np.maximum(det, 0))
 
-    def get_times(self) -> NDArray[np.datetime64]:
-        """
-        Get timestamps for each track point using sensor imagery times.
-
-        Matches track frames to sensor imagery frames and returns corresponding
-        timestamps. Returns NaT (Not-a-Time) for frames without matching imagery.
-
-        Returns
-        -------
-        NDArray[np.datetime64] or None
-            Array of timestamps with same length as track, or None if sensor
-            has no imagery times
-
-        Notes
-        -----
-        Uses binary search (searchsorted) for efficient frame matching.
-        """
-        sensor_imagery_frames, sensor_imagery_times = self.sensor.get_imagery_frames_and_times()
-        if len(sensor_imagery_times) < 1:
-            return None
-
-        # Find where each track_frame would be inserted in sensor_frames
-        indices = np.searchsorted(sensor_imagery_frames, self.frames)
-
-        # Create output array filled with NaT
-        track_times = np.full(len(self.frames), np.datetime64("NaT"), dtype="datetime64[ns]")
-
-        # Clip so we can safely index; out-of-bounds entries are caught by in_bounds
-        in_bounds = indices < len(sensor_imagery_frames)
-        clipped = np.minimum(indices, len(sensor_imagery_frames) - 1)
-        valid_mask = in_bounds & (sensor_imagery_frames[clipped] == self.frames)
-
-        # Assign matching times
-        track_times[valid_mask] = sensor_imagery_times[indices[valid_mask]]
-
-        return track_times
-
     @classmethod
     def normalize_dataframe(cls, df: pd.DataFrame, sensor: Sensor, name: str) -> pd.DataFrame:
         """Normalize temporal and spatial coordinates for a track.
@@ -630,11 +593,6 @@ class Track(Detector):
             df["Latitude (deg)"] = np.full(len(self.frames), np.nan)
             df["Longitude (deg)"] = np.full(len(self.frames), np.nan)
             df["Altitude (km)"] = np.full(len(self.frames), np.nan)
-
-        # Include times if possible
-        track_times = self.get_times()
-        if track_times is not None:
-            df["Times"] = pd.to_datetime(track_times).strftime("%Y-%m-%dT%H:%M:%S.%f")
 
         # Include extraction metadata if present
         if self.extraction_metadata is not None:

@@ -246,6 +246,21 @@ class Detector:
         self._cached_lats = lats
         return self._cached_lons, self._cached_lats
 
+    def get_times(self) -> Optional[NDArray[np.datetime64]]:
+        """Return imagery timestamps corresponding to each frame, or ``None`` if unavailable."""
+        sensor_imagery_frames, sensor_imagery_times = self.sensor.get_imagery_frames_and_times()
+        if len(sensor_imagery_times) < 1:
+            return None
+
+        indices = np.searchsorted(sensor_imagery_frames, self.frames)
+        times = np.full(len(self.frames), np.datetime64("NaT"), dtype="datetime64[ns]")
+
+        in_bounds = indices < len(sensor_imagery_frames)
+        clipped = np.minimum(indices, len(sensor_imagery_frames) - 1)
+        valid_mask = in_bounds & (sensor_imagery_frames[clipped] == self.frames)
+        times[valid_mask] = sensor_imagery_times[indices[valid_mask]]
+        return times
+
     def invalidate_caches(self):
         """Invalidate cached data structures when detector data changes."""
         self._frame_index = None
@@ -484,7 +499,13 @@ class Detector:
     def to_dataframe(self) -> pd.DataFrame:
         generated_fields = {data_field.name for data_field in fields(self) if not data_field.init}
         data = TypeAdapter(type(self)).dump_python(self, by_alias=True, exclude=generated_fields)
-        return pd.DataFrame(data)
+        df = pd.DataFrame(data)
+
+        times = self.get_times()
+        if times is not None:
+            df["Times"] = pd.to_datetime(times).strftime("%Y-%m-%dT%H:%M:%S.%f")
+
+        return df
 
     def get_unique_labels(self) -> set[str]:
         """
