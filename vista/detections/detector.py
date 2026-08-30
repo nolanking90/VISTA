@@ -11,6 +11,7 @@ from numpy.typing import NDArray
 from pydantic import AliasChoices, AliasPath, ConfigDict, Field, SkipValidation, TypeAdapter, field_serializer
 from pydantic import field_validator as pydantic_field_validator
 from pydantic.dataclasses import dataclass
+from PyQt6.QtCore import Qt
 
 from vista.sensors.sensor import Sensor
 from vista.utils.time_mapping import map_times_to_frames
@@ -273,7 +274,7 @@ class Detector:
         self._cached_lons = None
         self._cached_lats = None
 
-    def get_pen(self, width=None, **kwargs):
+    def get_pen(self, width=None, style=None):
         """
         Get cached PyQtGraph pen object, creating only if parameters changed.
 
@@ -281,6 +282,8 @@ class Detector:
         ----------
         width : int, optional
             Line width override, uses self.line_thickness if None
+        style : str, optional
+            Line style override, defaults to Qt.PenStyle.SolidLine
 
         Returns
         -------
@@ -289,10 +292,21 @@ class Detector:
         """
 
         actual_width = width if width is not None else self.line_thickness
-        params = (self.color, actual_width)
+
+        # Map string style to Qt constant
+        style_map = {
+            "SolidLine": Qt.PenStyle.SolidLine,
+            "DashLine": Qt.PenStyle.DashLine,
+            "DotLine": Qt.PenStyle.DotLine,
+            "DashDotLine": Qt.PenStyle.DashDotLine,
+            "DashDotDotLine": Qt.PenStyle.DashDotDotLine,
+        }
+        qt_style = style_map.get(style, Qt.PenStyle.SolidLine)
+
+        params = (self.color, actual_width, qt_style)
 
         if self._pen_params != params:
-            self._cached_pen = pg.mkPen(color=self.color, width=actual_width)
+            self._cached_pen = pg.mkPen(color=self.color, width=actual_width, style=qt_style)
             self._pen_params = params
 
         return self._cached_pen

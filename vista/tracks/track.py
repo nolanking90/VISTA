@@ -17,7 +17,6 @@ import pyqtgraph as pg
 from numpy.typing import NDArray
 from pydantic import Field
 from pydantic.dataclasses import dataclass
-from PyQt6.QtCore import Qt
 
 from vista.detections.detector import PYDANTIC_CONFIG, Detector, dataframe_field
 from vista.sensors.sensor import Sensor
@@ -254,42 +253,10 @@ class Track(Detector):
         self._length = None
 
     def get_pen(self, width=None, style=None):
-        """
-        Get cached PyQtGraph pen object, creating only if parameters changed.
-
-        Parameters
-        ----------
-        width : int, optional
-            Line width override, uses self.line_width if None
-        style : str, optional
-            Line style override, uses self.line_style if None
-
-        Returns
-        -------
-        pg.mkPen
-            PyQtGraph pen object
-        """
-
-        actual_width = width if width is not None else self.line_width
-        actual_style = style if style is not None else self.line_style
-
-        # Map string style to Qt constant
-        style_map = {
-            "SolidLine": Qt.PenStyle.SolidLine,
-            "DashLine": Qt.PenStyle.DashLine,
-            "DotLine": Qt.PenStyle.DotLine,
-            "DashDotLine": Qt.PenStyle.DashDotLine,
-            "DashDotDotLine": Qt.PenStyle.DashDotDotLine,
-        }
-        qt_style = style_map.get(actual_style, Qt.PenStyle.SolidLine)
-
-        params = (self.color, actual_width, qt_style)
-
-        if self._pen_params != params:
-            self._cached_pen = pg.mkPen(color=self.color, width=actual_width, style=qt_style)
-            self._pen_params = params
-
-        return self._cached_pen
+        return super().get_pen(
+            width=self.line_width if width is None else width,
+            style=self.line_style if style is None else style,
+        )
 
     def get_brush(self):
         """
