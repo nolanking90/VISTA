@@ -364,11 +364,12 @@ class Detector:
                 )
 
             # Eliminate detections outside the time bounds of the selected sensor
-            df = df[(times >= sensor_imagery_times[0]) & (times <= sensor_imagery_times[-1])]
+            in_bounds = (times >= sensor_imagery_times[0]) & (times <= sensor_imagery_times[-1])
+            df = df[in_bounds]
             if len(df) == 0:
                 raise ValueError(f"{cls.__name__} '{name}' times are not within the bounds of the selected imagery.")
 
-            times = pd.to_datetime(df["Times"]).to_numpy()
+            times = times[in_bounds]
             frames = map_times_to_frames(times, sensor_imagery_times, sensor_imagery_frames)
         else:
             raise ValueError(f"{cls.__name__} '{name}' must have either 'Frames' or 'Times' column")
