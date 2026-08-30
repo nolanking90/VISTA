@@ -1,3 +1,8 @@
+import os
+
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
+os.environ.pop("QT_QPA_PLATFORMTHEME", None)
+
 import numpy as np
 import pytest
 

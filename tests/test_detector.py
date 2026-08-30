@@ -4,9 +4,53 @@ import numpy as np
 import pandas as pd
 import pytest
 from helpers import DATA_DIR, assert_dataframe_time_round_trip, assert_init_fields_equal
+from PyQt6.QtCore import QPointF, Qt
+from pytestqt.qtbot import QtBot
 
 from vista.detections.detector import Detector
 from vista.sensors import Sensor
+from vista.widgets.core.imagery_viewer import ImageryViewer
+
+
+def make_editable_detector(sensor: Sensor) -> Detector:
+    return Detector(
+        name="editable-detector",
+        frames=np.array([1, 2], dtype=np.int64),
+        rows=np.array([10.0, 20.0]),
+        columns=np.array([100.0, 200.0]),
+        sensor=sensor,
+        labels=[{"first"}, {"second"}],
+        label_times=[datetime.datetime(2025, 1, 1), datetime.datetime(2025, 1, 2)],
+        labelers=["alice", "bob"],
+    )
+
+
+@pytest.fixture
+def imagery_viewer(qtbot: QtBot) -> ImageryViewer:
+    viewer = ImageryViewer()
+    qtbot.addWidget(viewer)
+    viewer.resize(800, 600)
+    viewer.show()
+    viewer.plot_item.setRange(xRange=(0, 300), yRange=(0, 30), padding=0)
+    qtbot.wait(10)
+    return viewer
+
+
+def click_plot(qtbot: QtBot, viewer: ImageryViewer, *, row: float, column: float) -> None:
+    scene_position = viewer.plot_item.vb.mapViewToScene(QPointF(column, row))
+    viewport_position = viewer.graphics_layout.mapFromScene(scene_position)
+    qtbot.mouseClick(
+        viewer.graphics_layout.viewport(),
+        Qt.MouseButton.LeftButton,
+        pos=viewport_position,
+    )
+
+
+def finish_editing(viewer: ImageryViewer, detector: Detector) -> Detector:
+    viewer.start_detection_editing(detector)
+    edited = viewer.finish_detection_editing()
+    assert edited is detector
+    return edited
 
 
 def test_detector_deserializes_csv_exported_by_main(sensor: Sensor):
@@ -148,6 +192,65 @@ def test_detector_selection_rejects_scalar_indices(sensor: Sensor):
         detector[0]
     with pytest.raises(TypeError):
         detector[np.array(0)]
+
+
+def test_finishing_detection_editing_preserves_labels(sensor: Sensor, imagery_viewer: ImageryViewer):
+    detector = make_editable_detector(sensor)
+
+    edited = finish_editing(imagery_viewer, detector)
+
+    assert edited.labels == [{"first"}, {"second"}]
+    assert edited.label_times == [datetime.datetime(2025, 1, 1), datetime.datetime(2025, 1, 2)]
+    assert edited.labelers == ["alice", "bob"]
+
+
+def test_moving_detection_preserves_its_labels(sensor: Sensor, imagery_viewer: ImageryViewer, qtbot: QtBot):
+    detector = make_editable_detector(sensor)
+    imagery_viewer.start_detection_editing(detector)
+    imagery_viewer.set_frame_number(1)
+    click_plot(qtbot, imagery_viewer, row=10.0, column=100.0)
+    click_plot(qtbot, imagery_viewer, row=15.0, column=150.0)
+
+    edited = imagery_viewer.finish_detection_editing()
+
+    assert edited is detector
+    np.testing.assert_allclose(edited.rows, [15.0, 20.0], atol=0.5)
+    np.testing.assert_allclose(edited.columns, [150.0, 200.0], atol=0.5)
+    assert edited.labels == [{"first"}, {"second"}]
+    assert edited.labelers == ["alice", "bob"]
+
+
+def test_adding_detection_does_not_clear_existing_labels(
+    sensor: Sensor,
+    imagery_viewer: ImageryViewer,
+    qtbot: QtBot,
+):
+    detector = make_editable_detector(sensor)
+    imagery_viewer.start_detection_editing(detector)
+    imagery_viewer.set_frame_number(2)
+    click_plot(qtbot, imagery_viewer, row=25.0, column=250.0)
+
+    edited = imagery_viewer.finish_detection_editing()
+
+    assert edited is detector
+    assert edited.labels == [{"first"}, {"second"}, set()]
+    assert edited.label_times == [datetime.datetime(2025, 1, 1), datetime.datetime(2025, 1, 2), None]
+    assert edited.labelers == ["alice", "bob", None]
+
+
+def test_deleting_detection_removes_only_its_labels(sensor: Sensor, imagery_viewer: ImageryViewer, qtbot: QtBot):
+    detector = make_editable_detector(sensor)
+    imagery_viewer.start_detection_editing(detector)
+    imagery_viewer.set_frame_number(1)
+    click_plot(qtbot, imagery_viewer, row=10.0, column=100.0)
+
+    edited = imagery_viewer.finish_detection_editing()
+
+    assert edited is detector
+    np.testing.assert_array_equal(edited.frames, [2])
+    assert edited.labels == [{"second"}]
+    assert edited.label_times == [datetime.datetime(2025, 1, 2)]
+    assert edited.labelers == ["bob"]
 
 
 def test_detector_dataframe_time_round_trip(timed_sensor: Sensor):

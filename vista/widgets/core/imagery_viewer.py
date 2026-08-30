@@ -1,7 +1,9 @@
 """ImageryViewer widget for displaying imagery with overlays"""
 
+import datetime
 import os
 import time
+from dataclasses import dataclass, field
 
 import numpy as np
 import pyqtgraph as pg
@@ -28,6 +30,15 @@ from vista.wms.wms_tile_fetcher import WMSTileFetcherThread
 
 # Performance monitoring (enabled via environment variable)
 ENABLE_PERF_MONITORING = os.environ.get("VISTA_PERF_MONITOR", "0") == "1"
+
+
+@dataclass
+class _EditableDetection:
+    row: float
+    column: float
+    labels: set[str] = field(default_factory=set)
+    label_time: datetime.datetime | None = None
+    labeler: str | None = None
 
 
 class CustomViewBox(pg.ViewBox):
@@ -130,7 +141,8 @@ class ImageryViewer(QWidget):
         # Detection creation/editing mode
         self.detection_creation_mode = False
         self.detection_editing_mode = False
-        self.current_detection_data = {}  # frame_number -> [(row, col), ...] for detections being created/edited
+        self.current_detection_data = {}  # frame_number -> [_EditableDetection, ...]
+        self._pending_detection_edits = {}  # Metadata retained while an edited point is repositioned
         self.editing_detector = None  # Detector object being edited
         self.temp_detection_plot = None  # Temporary plot item for detections being created/edited
 
@@ -2424,6 +2436,7 @@ class ImageryViewer(QWidget):
         """Start detection creation mode"""
         self.detection_creation_mode = True
         self.current_detection_data = {}
+        self._pending_detection_edits = {}
         self.temp_detection_plot = None
         # Update cursor based on all interactive modes
         self.update_cursor()
@@ -2436,11 +2449,20 @@ class ImageryViewer(QWidget):
         self.editing_detector = detector
         # Load existing detection data
         self.current_detection_data = {}
+        self._pending_detection_edits = {}
         for i in range(len(detector.frames)):
             frame = detector.frames[i]
             if frame not in self.current_detection_data:
                 self.current_detection_data[frame] = []
-            self.current_detection_data[frame].append((detector.rows[i], detector.columns[i]))
+            self.current_detection_data[frame].append(
+                _EditableDetection(
+                    row=detector.rows[i],
+                    column=detector.columns[i],
+                    labels=detector.labels[i].copy(),
+                    label_time=detector.label_times[i],
+                    labeler=detector.labelers[i],
+                )
+            )
         self.temp_detection_plot = None
         # Update cursor based on all interactive modes
         self.update_cursor()
@@ -2474,10 +2496,10 @@ class ImageryViewer(QWidget):
             columns_list = []
 
             for frame, detections in sorted(self.current_detection_data.items()):
-                for row, col in detections:
+                for detection in detections:
                     frames_list.append(frame)
-                    rows_list.append(row)
-                    columns_list.append(col)
+                    rows_list.append(detection.row)
+                    columns_list.append(detection.column)
 
             detector = Detector(
                 name=f"Detector {len(self.detectors) + 1}",
@@ -2488,9 +2510,11 @@ class ImageryViewer(QWidget):
             )
 
             self.current_detection_data = {}
+            self._pending_detection_edits = {}
             return detector
         else:
             self.current_detection_data = {}
+            self._pending_detection_edits = {}
             return None
 
     def finish_detection_editing(self):
@@ -2518,29 +2542,37 @@ class ImageryViewer(QWidget):
             frames_list = []
             rows_list = []
             columns_list = []
+            labels_list = []
+            label_times_list = []
+            labelers_list = []
 
             for frame, detections in sorted(self.current_detection_data.items()):
-                for row, col in detections:
+                for detection in detections:
                     frames_list.append(frame)
-                    rows_list.append(row)
-                    columns_list.append(col)
+                    rows_list.append(detection.row)
+                    columns_list.append(detection.column)
+                    labels_list.append(detection.labels.copy())
+                    label_times_list.append(detection.label_time)
+                    labelers_list.append(detection.labeler)
 
             editing_detector.frames = np.array(frames_list, dtype=np.int_)
             editing_detector.rows = np.array(rows_list)
             editing_detector.columns = np.array(columns_list)
-            editing_detector.labels = [set() for _ in frames_list]
-            editing_detector.label_times = [None] * len(frames_list)
-            editing_detector.labelers = [None] * len(frames_list)
+            editing_detector.labels = labels_list
+            editing_detector.label_times = label_times_list
+            editing_detector.labelers = labelers_list
 
             # Invalidate caches since detector data was modified
             editing_detector.invalidate_caches()
 
             self.current_detection_data = {}
+            self._pending_detection_edits = {}
             # Refresh detection display
             self.update_overlays()
             return editing_detector
         else:
             self.current_detection_data = {}
+            self._pending_detection_edits = {}
             return None
 
     def _show_point_selection_dialog(self):
@@ -2735,17 +2767,21 @@ class ImageryViewer(QWidget):
 
                 # Check if click is near an existing detection point on this frame
                 detection_list = self.current_detection_data[self.current_frame_number]
-                for i, (existing_row, existing_col) in enumerate(detection_list):
+                for i, detection in enumerate(detection_list):
                     if self.map_view_mode:
                         # Compare in map (lon, lat) space for consistent tolerance
-                        ex_lon, ex_lat = self._pixel_to_map(existing_row, existing_col)
+                        ex_lon, ex_lat = self._pixel_to_map(detection.row, detection.column)
                         distance = np.sqrt((col - ex_lon) ** 2 + (row - ex_lat) ** 2)
                     else:
-                        distance = np.sqrt((col - existing_col) ** 2 + (row - existing_row) ** 2)
+                        distance = np.sqrt((col - detection.column) ** 2 + (row - detection.row) ** 2)
 
                     # If click is near an existing point, remove it
                     if distance < tolerance:
-                        detection_list.pop(i)
+                        removed_detection = detection_list.pop(i)
+                        if self.detection_editing_mode:
+                            self._pending_detection_edits.setdefault(self.current_frame_number, []).append(
+                                removed_detection
+                            )
                         # Clean up empty frame entries
                         if len(detection_list) == 0:
                             del self.current_detection_data[self.current_frame_number]
@@ -2757,7 +2793,16 @@ class ImageryViewer(QWidget):
                 refined_row, refined_col = self._refine_clicked_point(pixel_row, pixel_col)
 
                 # Store in pixel coordinates (detections always store row/col)
-                self.current_detection_data[self.current_frame_number].append((refined_row, refined_col))
+                pending_edits = self._pending_detection_edits.get(self.current_frame_number, [])
+                if self.detection_editing_mode and pending_edits:
+                    detection = pending_edits.pop()
+                    detection.row = refined_row
+                    detection.column = refined_col
+                    if not pending_edits:
+                        del self._pending_detection_edits[self.current_frame_number]
+                else:
+                    detection = _EditableDetection(refined_row, refined_col)
+                self.current_detection_data[self.current_frame_number].append(detection)
 
                 # Update temporary detection display
                 self._update_temp_detection_display()
@@ -3031,16 +3076,16 @@ class ImageryViewer(QWidget):
 
         # Get detections for current frame only
         if self.current_frame_number in self.current_detection_data:
-            for row, col in self.current_detection_data[self.current_frame_number]:
+            for detection in self.current_detection_data[self.current_frame_number]:
                 if self.map_view_mode:
-                    lon, lat = self._pixel_to_map(row, col)
+                    lon, lat = self._pixel_to_map(detection.row, detection.column)
                     if np.isnan(lon):
                         continue
                     current_frame_x.append(lon)
                     current_frame_y.append(lat)
                 else:
-                    current_frame_x.append(col)
-                    current_frame_y.append(row)
+                    current_frame_x.append(detection.column)
+                    current_frame_y.append(detection.row)
 
         # Draw current frame detections
         if len(current_frame_x) > 0:
