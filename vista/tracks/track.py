@@ -193,14 +193,12 @@ class Track(Detector):
 
         return track_slice
 
-    def _build_frame_index(self):
-        """Build index mapping frame numbers to track indices for O(1) lookup."""
-        if self._frame_index is None:
-            self._frame_index = {}
-            for i, frame in enumerate(self.frames):
-                self._frame_index[frame] = i
+    def get_index_at_frame(self, frame_num: int) -> int | None:
+        """Return the index of the track point at a frame, if present."""
+        indices = self._get_indices_at_frame(frame_num)
+        return indices[-1] if indices else None
 
-    def get_track_data_at_frame(self, frame_num):
+    def get_track_data_at_frame(self, frame_num: int) -> tuple[np.float64, np.float64] | None:
         """
         Get track position at a specific frame using O(1) cached lookup.
 
@@ -214,10 +212,9 @@ class Track(Detector):
         tuple or None
             (row, column) coordinates at this frame, or None if frame not in track
         """
-        self._build_frame_index()
-        idx = self._frame_index.get(frame_num)
-        if idx is not None:
-            return self.rows[idx], self.columns[idx]
+        index = self.get_index_at_frame(frame_num)
+        if index is not None:
+            return self.rows[index], self.columns[index]
         return None
 
     def get_visible_indices(self, current_frame):

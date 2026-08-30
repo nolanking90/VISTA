@@ -848,8 +848,7 @@ class ImageryViewer(QWidget):
                     path.setData(x=[], y=[])  # Hide line
 
                 # Update current position marker (show marker at current frame if it exists)
-                track._build_frame_index()
-                idx = track._frame_index.get(frame_num)
+                idx = track.get_index_at_frame(frame_num)
                 if idx is not None:
                     if _map_mode:
                         mx, my = [geodetic[0][idx]], [geodetic[1][idx]]
@@ -887,8 +886,7 @@ class ImageryViewer(QWidget):
                         path.setData(x=[], y=[])  # Hide line
 
                     # Update current position marker
-                    track._build_frame_index()
-                    idx = track._frame_index.get(frame_num)
+                    idx = track.get_index_at_frame(frame_num)
                     if idx is not None:
                         if _map_mode:
                             mx, my = [geodetic[0][idx]], [geodetic[1][idx]]
@@ -920,69 +918,58 @@ class ImageryViewer(QWidget):
                         del self.track_uncertainty_items[track_id]
                     continue
 
-                # Get track data at current frame
-                track_data = track.get_track_data_at_frame(frame_num)
-                if track_data is not None:
+                idx = track.get_index_at_frame(frame_num)
+                if idx is not None:
                     # Get settings
                     settings = QSettings("Vista", "VistaApp")
                     uncertainty_style = settings.value("tracks/uncertainty_line_style", "DashLine", type=str)
                     uncertainty_width = settings.value("tracks/uncertainty_line_width", 1, type=int)
                     uncertainty_scale = settings.value("tracks/uncertainty_scale", 1.0, type=float)
 
-                    # Find index for current frame
-                    track._build_frame_index()
-                    idx = track._frame_index.get(frame_num)
-                    if idx is not None:
-                        row = track.rows[idx]
-                        col = track.columns[idx]
+                    row = track.rows[idx]
+                    col = track.columns[idx]
 
-                        # Get ellipse parameters from covariance matrix
-                        ellipse_params = track.get_uncertainty_ellipse_parameters()
-                        if ellipse_params is not None:
-                            semi_major, semi_minor, rotation_deg = ellipse_params
+                    # Get ellipse parameters from covariance matrix
+                    ellipse_params = track.get_uncertainty_ellipse_parameters()
+                    if ellipse_params is not None:
+                        semi_major, semi_minor, rotation_deg = ellipse_params
 
-                            # Apply uncertainty scale to semi-axes
-                            scaled_semi_major = semi_major[idx] * uncertainty_scale
-                            scaled_semi_minor = semi_minor[idx] * uncertainty_scale
-                            rot = rotation_deg[idx]
+                        # Apply uncertainty scale to semi-axes
+                        scaled_semi_major = semi_major[idx] * uncertainty_scale
+                        scaled_semi_minor = semi_minor[idx] * uncertainty_scale
+                        rot = rotation_deg[idx]
 
-                            # Remove old ellipse
-                            if track_id in self.track_uncertainty_items:
-                                for item in self.track_uncertainty_items[track_id]:
-                                    self.plot_item.removeItem(item)
-
-                            # Create ellipse bounding rectangle
-                            # Center at (col, row), size (2*semi_major, 2*semi_minor)
-                            # Note: QGraphicsEllipseItem expects width/height in axis-aligned orientation
-                            ellipse = QGraphicsEllipseItem(
-                                QRectF(
-                                    col - scaled_semi_major,
-                                    row - scaled_semi_minor,
-                                    2 * scaled_semi_major,
-                                    2 * scaled_semi_minor,
-                                )
-                            )
-
-                            # Set rotation around center
-                            ellipse.setTransformOriginPoint(col, row)
-                            ellipse.setRotation(rot)
-
-                            # Set pen style using track color and uncertainty settings
-                            pen = track.get_pen(width=uncertainty_width, style=uncertainty_style)
-                            ellipse.setPen(pen)
-
-                            # No fill brush (transparent interior)
-                            ellipse.setBrush(pg.mkBrush(None))
-
-                            # Add to plot
-                            self.plot_item.addItem(ellipse)
-                            self.track_uncertainty_items[track_id] = [ellipse]
-                    else:
-                        # No data at current frame, remove ellipse
+                        # Remove old ellipse
                         if track_id in self.track_uncertainty_items:
                             for item in self.track_uncertainty_items[track_id]:
                                 self.plot_item.removeItem(item)
-                            del self.track_uncertainty_items[track_id]
+
+                        # Create ellipse bounding rectangle
+                        # Center at (col, row), size (2*semi_major, 2*semi_minor)
+                        # Note: QGraphicsEllipseItem expects width/height in axis-aligned orientation
+                        ellipse = QGraphicsEllipseItem(
+                            QRectF(
+                                col - scaled_semi_major,
+                                row - scaled_semi_minor,
+                                2 * scaled_semi_major,
+                                2 * scaled_semi_minor,
+                            )
+                        )
+
+                        # Set rotation around center
+                        ellipse.setTransformOriginPoint(col, row)
+                        ellipse.setRotation(rot)
+
+                        # Set pen style using track color and uncertainty settings
+                        pen = track.get_pen(width=uncertainty_width, style=uncertainty_style)
+                        ellipse.setPen(pen)
+
+                        # No fill brush (transparent interior)
+                        ellipse.setBrush(pg.mkBrush(None))
+
+                        # Add to plot
+                        self.plot_item.addItem(ellipse)
+                        self.track_uncertainty_items[track_id] = [ellipse]
                 else:
                     # No track data at current frame, remove ellipse
                     if track_id in self.track_uncertainty_items:

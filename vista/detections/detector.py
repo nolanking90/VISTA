@@ -120,7 +120,9 @@ class Detector:
     labelers: list[Optional[str]] = dataframe_field("labelers", "Labeler", default_factory=list)
 
     # Performance optimization: cached data structures
-    _frame_index: Optional[dict] = field(default=None, init=False, repr=False)  # Frame number -> detection indices
+    _frame_index: Optional[dict[int, list[int]]] = field(
+        default=None, init=False, repr=False
+    )  # Frame number -> detection indices
     _cached_pen: object = field(default=None, init=False, repr=False)  # Cached PyQtGraph pen
     _pen_params: Optional[tuple] = field(default=None, init=False, repr=False)  # Parameters used for cached pen
     _cached_lons: Optional[NDArray[np.float64]] = field(default=None, init=False, repr=False)  # Cached longitude coords
@@ -183,16 +185,21 @@ class Detector:
             return False
         return self.uuid == other.uuid
 
-    def _build_frame_index(self):
+    def _build_frame_index(self) -> None:
         """Build index mapping frame numbers to detection indices for O(1) lookup."""
         if self._frame_index is None:
-            self._frame_index = {}
-            for i, frame in enumerate(self.frames):
-                if frame not in self._frame_index:
-                    self._frame_index[frame] = []
-                self._frame_index[frame].append(i)
+            frame_index: dict[int, list[int]] = {}
+            for index, frame in enumerate(self.frames):
+                frame_index.setdefault(int(frame), []).append(index)
+            self._frame_index = frame_index
 
-    def get_detections_at_frame(self, frame_num):
+    def _get_indices_at_frame(self, frame_num: int) -> list[int]:
+        """Return the point indices associated with a frame."""
+        self._build_frame_index()
+        assert self._frame_index is not None
+        return self._frame_index.get(frame_num, [])
+
+    def get_detections_at_frame(self, frame_num: int) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         """
         Get detection coordinates at a specific frame using O(1) cached lookup.
 
@@ -208,11 +215,8 @@ class Detector:
         cols : NDArray
             Column coordinates of detections at this frame
         """
-        self._build_frame_index()
-        indices = self._frame_index.get(frame_num, [])
-        if len(indices) > 0:
-            return self.rows[indices], self.columns[indices]
-        return np.array([]), np.array([])
+        indices = self._get_indices_at_frame(frame_num)
+        return self.rows[indices], self.columns[indices]
 
     def get_geodetic_coords(self) -> tuple[NDArray[np.float64], NDArray[np.float64]] | None:
         """Get geodetic coordinates for all detection points, computing and caching if needed.
