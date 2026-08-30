@@ -430,7 +430,7 @@ class Detector:
         return detector
 
     @classmethod
-    def from_dataframe(cls, df: pd.DataFrame, sensor, name: str | None = None):
+    def from_dataframe(cls, df: pd.DataFrame, sensor: Sensor, name: str | None = None) -> Self:
         """
         Create Detector from pandas DataFrame.
 
@@ -457,7 +457,10 @@ class Detector:
         Labels should be comma-separated strings in the "Labels" column.
         """
         if name is None:
-            name = df["Detector"][0]
+            name_column = cls.__pydantic_fields__["name"].serialization_alias
+            if name_column is None:
+                raise ValueError(f"{cls.__name__} has no DataFrame column alias for its name")
+            name = str(df[name_column].iloc[0])
 
         df = cls.normalize_dataframe(df, sensor, name)
         return cls._from_normalized_dataframe(df, sensor, name)

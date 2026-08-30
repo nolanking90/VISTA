@@ -428,7 +428,7 @@ class Track(Detector):
         return df
 
     @classmethod
-    def from_dataframe(cls, df: pd.DataFrame, sensor: Sensor, name: str | None = None):
+    def from_dataframe(cls, df: pd.DataFrame, sensor: Sensor, name: str | None = None) -> Self:
         """
         Create Track from DataFrame with automatic coordinate conversion.
 
@@ -475,32 +475,18 @@ class Track(Detector):
             - "Color", "Marker", "Line Width", "Marker Size", "Visible",
               "Complete", "Show Line", "Line Style", "Tail Length", "Labels", "Tracker"
         """
+        track = super().from_dataframe(df, sensor, name)
+        covariances = (track.covariance_00, track.covariance_01, track.covariance_11)
 
-        if name is None:
-            name = str(df["Track"][0])
+        if all(covariance is not None and np.all(np.isfinite(covariance)) for covariance in covariances):
+            track.show_uncertainty = True
+        else:
+            track.covariance_00 = None
+            track.covariance_01 = None
+            track.covariance_11 = None
+            track.show_uncertainty = False
 
-        df = cls.normalize_dataframe(df, sensor, name)
-
-        # Handle uncertainty data only if all three arrays contain finite values.
-        covariance_kwargs = {
-            "covariance_00": None,
-            "covariance_01": None,
-            "covariance_11": None,
-            "show_uncertainty": False,
-        }
-        if "Covariance 00" in df.columns and "Covariance 01" in df.columns and "Covariance 11" in df.columns:
-            cov_00 = df["Covariance 00"].to_numpy(dtype=np.float64)
-            cov_01 = df["Covariance 01"].to_numpy(dtype=np.float64)
-            cov_11 = df["Covariance 11"].to_numpy(dtype=np.float64)
-            if np.all(np.isfinite(cov_00)) and np.all(np.isfinite(cov_01)) and np.all(np.isfinite(cov_11)):
-                covariance_kwargs.update(
-                    covariance_00=cov_00,
-                    covariance_01=cov_01,
-                    covariance_11=cov_11,
-                    show_uncertainty=True,
-                )
-
-        return super()._from_normalized_dataframe(df, sensor, name, **covariance_kwargs)
+        return track
 
     @property
     def length(self):

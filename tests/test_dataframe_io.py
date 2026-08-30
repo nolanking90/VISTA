@@ -187,10 +187,34 @@ def test_track_deserializes_csv_exported_by_main():
     assert track.line_style == "DashLine"
     assert track.tracker == "legacy-tracker"
     assert track.extraction_metadata is None
+    assert track.covariance_00 is not None
+    assert track.covariance_01 is not None
+    assert track.covariance_11 is not None
     np.testing.assert_allclose(track.covariance_00, [4.0, 5.0, 6.0])
     np.testing.assert_allclose(track.covariance_01, [0.25, 0.5, 0.75])
     np.testing.assert_allclose(track.covariance_11, [7.0, 8.0, 9.0])
     assert bool(track.show_uncertainty) is True
+
+
+@pytest.mark.parametrize("invalid_kind", ["incomplete", "nonfinite"])
+def test_track_discards_invalid_covariance_data(invalid_kind: str):
+    data = {
+        "Track": ["invalid-covariance"] * 2,
+        "Frames": [1, 2],
+        "Rows": [10.0, 20.0],
+        "Columns": [100.0, 200.0],
+        "Covariance 00": [1.0, 2.0],
+        "Covariance 01": [0.1, 0.2],
+    }
+    if invalid_kind == "nonfinite":
+        data["Covariance 11"] = [4.0, np.nan]
+
+    track = Track.from_dataframe(pd.DataFrame(data), SENSOR)
+
+    assert track.covariance_00 is None
+    assert track.covariance_01 is None
+    assert track.covariance_11 is None
+    assert track.show_uncertainty is False
 
 
 def test_track_dataframe_round_trip():
