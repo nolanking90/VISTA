@@ -23,7 +23,7 @@ from vista.sensors.sensor import Sensor
 from vista.utils.geodetic_mapping import map_geodetic_to_pixel
 
 
-@dataclass(eq=False, config=PYDANTIC_CONFIG)
+@dataclass(eq=False, repr=False, config=PYDANTIC_CONFIG)
 class Track(Detector):
     """
     Represents a single object trajectory across multiple frames.
@@ -171,41 +171,26 @@ class Track(Detector):
         self.labelers = [labeler] * point_count
 
     def __getitem__(self, s):
-        if isinstance(s, slice) or isinstance(s, np.ndarray):
-            track_slice = super().__getitem__(s)
+        track_slice = super().__getitem__(s)
 
-            # Slice extraction metadata if present
-            if track_slice.extraction_metadata is not None:
-                track_slice.extraction_metadata = {
-                    "chip_size": track_slice.extraction_metadata["chip_size"],
-                    "chips": track_slice.extraction_metadata["chips"][s],
-                    "signal_masks": track_slice.extraction_metadata["signal_masks"][s],
-                    "noise_stds": track_slice.extraction_metadata["noise_stds"][s],
-                }
+        # Slice extraction metadata if present
+        if track_slice.extraction_metadata is not None:
+            track_slice.extraction_metadata = {
+                "chip_size": track_slice.extraction_metadata["chip_size"],
+                "chips": track_slice.extraction_metadata["chips"][s],
+                "signal_masks": track_slice.extraction_metadata["signal_masks"][s],
+                "noise_stds": track_slice.extraction_metadata["noise_stds"][s],
+            }
 
-            # Slice uncertainty data if present
-            if track_slice.covariance_00 is not None:
-                track_slice.covariance_00 = track_slice.covariance_00[s]
-            if track_slice.covariance_01 is not None:
-                track_slice.covariance_01 = track_slice.covariance_01[s]
-            if track_slice.covariance_11 is not None:
-                track_slice.covariance_11 = track_slice.covariance_11[s]
+        # Slice uncertainty data if present
+        if track_slice.covariance_00 is not None:
+            track_slice.covariance_00 = track_slice.covariance_00[s]
+        if track_slice.covariance_01 is not None:
+            track_slice.covariance_01 = track_slice.covariance_01[s]
+        if track_slice.covariance_11 is not None:
+            track_slice.covariance_11 = track_slice.covariance_11[s]
 
-            return track_slice
-        else:
-            raise TypeError("Invalid index or slice type.")
-
-    def __len__(self):
-        return len(self.frames)
-
-    def __str__(self):
-        return self.__repr__()
-
-    def __repr__(self):
-        s = f"{self.__class__.__name__}({self.name})"
-        s += "\n" + len(s) * "-" + "\n"
-        s += str(self.to_dataframe())
-        return s
+        return track_slice
 
     def _build_frame_index(self):
         """Build index mapping frame numbers to track indices for O(1) lookup."""
@@ -263,48 +248,12 @@ class Track(Detector):
         indices = np.where(mask)[0]
         return indices if len(indices) > 0 else None
 
-    def get_geodetic_coords(self) -> tuple[NDArray[np.float64], NDArray[np.float64]] | None:
-        """Get geodetic coordinates for all track points, computing and caching if needed.
-
-        Projects each track point using its own frame's sensor geometry, so the
-        result represents the true geographic location at each time step. The result
-        is cached so subsequent calls return immediately.
-
-        Returns
-        -------
-        tuple[NDArray[np.float64], NDArray[np.float64]] or None
-            (longitudes, latitudes) in degrees, or None if the sensor cannot geolocate.
-        """
-        if self._cached_lons is not None and self._cached_lats is not None:
-            return self._cached_lons, self._cached_lats
-
-        if not self.sensor or not self.sensor.can_geolocate():
-            return None
-
-        # Single vectorized call — sensor handles frame grouping internally
-        locations = self.sensor.pixel_to_geodetic(self.frames, self.rows, self.columns)
-        lons = np.asarray(locations.lon.deg, dtype=np.float64)
-        lats = np.asarray(locations.lat.deg, dtype=np.float64)
-
-        # Set invalid locations to NaN
-        invalid = (locations.y.value == 0) & (locations.z.value == 0)
-        lons[invalid] = np.nan
-        lats[invalid] = np.nan
-
-        self._cached_lons = lons
-        self._cached_lats = lats
-        return self._cached_lons, self._cached_lats
-
     def invalidate_caches(self):
         """Invalidate cached data structures when track data changes."""
-        self._frame_index = None
-        self._cached_pen = None
+        super().invalidate_caches()
         self._cached_brush = None
-        self._pen_params = None
         self._brush_params = None
         self._length = None
-        self._cached_lons = None
-        self._cached_lats = None
 
     def get_pen(self, width=None, style=None):
         """
