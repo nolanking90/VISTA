@@ -293,62 +293,24 @@ class Detector:
 
         return self._cached_pen
 
-    def __getitem__(self, s):
-        if isinstance(s, slice) or isinstance(s, np.ndarray):
-            # Handle slice objects
-            detector_slice = self.copy()
-            detector_slice.frames = detector_slice.frames[s]
-            detector_slice.rows = detector_slice.rows[s]
-            detector_slice.columns = detector_slice.columns[s]
-            # Subset labels if they exist
-            if len(detector_slice.labels) > 0:
-                if isinstance(s, slice):
-                    detector_slice.labels = detector_slice.labels[s]
-                else:  # numpy array boolean mask or indices
-                    detector_slice.labels = (
-                        [
-                            detector_slice.labels[i]
-                            for i in np.where(s)[0]
-                            if isinstance(s, np.ndarray) and s.dtype == bool
-                        ]
-                        if isinstance(s, np.ndarray) and s.dtype == bool
-                        else [detector_slice.labels[i] for i in s]
-                    )
-            # Subset per-detection label metadata (same indexing rules as labels)
-            if len(detector_slice.label_times) > 0:
-                if isinstance(s, slice):
-                    detector_slice.label_times = detector_slice.label_times[s]
-                else:
-                    detector_slice.label_times = (
-                        [
-                            detector_slice.label_times[i]
-                            for i in np.where(s)[0]
-                            if isinstance(s, np.ndarray) and s.dtype == bool
-                        ]
-                        if isinstance(s, np.ndarray) and s.dtype == bool
-                        else [detector_slice.label_times[i] for i in s]
-                    )
-            if len(detector_slice.labelers) > 0:
-                if isinstance(s, slice):
-                    detector_slice.labelers = detector_slice.labelers[s]
-                else:
-                    detector_slice.labelers = (
-                        [
-                            detector_slice.labelers[i]
-                            for i in np.where(s)[0]
-                            if isinstance(s, np.ndarray) and s.dtype == bool
-                        ]
-                        if isinstance(s, np.ndarray) and s.dtype == bool
-                        else [detector_slice.labelers[i] for i in s]
-                    )
-            # Slice cached geodetic coords if present
-            if detector_slice._cached_lons is not None:
-                detector_slice._cached_lons = detector_slice._cached_lons[s]
-            if detector_slice._cached_lats is not None:
-                detector_slice._cached_lats = detector_slice._cached_lats[s]
-            return detector_slice
-        else:
+    def __getitem__(self, s) -> Self:
+        if not isinstance(s, (slice, np.ndarray)) or (isinstance(s, np.ndarray) and s.ndim == 0):
             raise TypeError("Invalid index or slice type.")
+
+        selected_indices = np.arange(len(self))[s]
+        detector_slice = self.copy()
+        detector_slice.frames = detector_slice.frames[s]
+        detector_slice.rows = detector_slice.rows[s]
+        detector_slice.columns = detector_slice.columns[s]
+        detector_slice.labels = [detector_slice.labels[i] for i in selected_indices]
+        detector_slice.label_times = [detector_slice.label_times[i] for i in selected_indices]
+        detector_slice.labelers = [detector_slice.labelers[i] for i in selected_indices]
+
+        if detector_slice._cached_lons is not None:
+            detector_slice._cached_lons = detector_slice._cached_lons[s]
+        if detector_slice._cached_lats is not None:
+            detector_slice._cached_lats = detector_slice._cached_lats[s]
+        return detector_slice
 
     def __len__(self):
         return len(self.frames)

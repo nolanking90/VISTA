@@ -142,6 +142,63 @@ def test_detector_copy_preserves_fields_and_independence():
     assert "copy only" not in original.labels[0]
 
 
+@pytest.mark.parametrize(
+    ("selection", "expected_indices"),
+    [
+        (slice(1, 4, 2), np.array([1, 3])),
+        (np.array([True, False, True, False]), np.array([0, 2])),
+        (np.array([3, 1, 1]), np.array([3, 1, 1])),
+        (np.array([], dtype=np.int64), np.array([], dtype=np.int64)),
+    ],
+)
+def test_detector_selection_keeps_fields_aligned(selection, expected_indices):
+    label_times: list[datetime.datetime | None] = [datetime.datetime(2025, 1, day) for day in range(1, 5)]
+    detector = Detector(
+        name="selected-detector",
+        frames=np.array([2, 4, 6, 8]),
+        rows=np.array([12.0, 14.0, 16.0, 18.0]),
+        columns=np.array([102.0, 104.0, 106.0, 108.0]),
+        sensor=SENSOR,
+        labels=[{"zero"}, {"one"}, {"two"}, {"three"}],
+        label_times=label_times,
+        labelers=["alice", "bob", "charlie", "dana"],
+    )
+    detector._cached_lons = np.array([-105.0, -104.0, -103.0, -102.0])
+    detector._cached_lats = np.array([39.0, 40.0, 41.0, 42.0])
+
+    selected = detector[selection]
+
+    np.testing.assert_array_equal(selected.frames, detector.frames[expected_indices])
+    np.testing.assert_array_equal(selected.rows, detector.rows[expected_indices])
+    np.testing.assert_array_equal(selected.columns, detector.columns[expected_indices])
+    assert selected.labels == [detector.labels[i] for i in expected_indices]
+    assert selected.label_times == [detector.label_times[i] for i in expected_indices]
+    assert selected.labelers == [detector.labelers[i] for i in expected_indices]
+    assert selected._cached_lons is not None
+    assert selected._cached_lats is not None
+    np.testing.assert_array_equal(selected._cached_lons, detector._cached_lons[expected_indices])
+    np.testing.assert_array_equal(selected._cached_lats, detector._cached_lats[expected_indices])
+
+    if len(selected) > 0:
+        selected.labels[0].add("selected only")
+        assert "selected only" not in detector.labels[expected_indices[0]]
+
+
+def test_detector_selection_rejects_scalar_indices():
+    detector = Detector(
+        name="selected-detector",
+        frames=np.array([2]),
+        rows=np.array([12.0]),
+        columns=np.array([102.0]),
+        sensor=SENSOR,
+    )
+
+    with pytest.raises(TypeError):
+        detector[0]
+    with pytest.raises(TypeError):
+        detector[np.array(0)]
+
+
 @pytest.mark.parametrize("object_type", [Detector, Track])
 def test_dataframe_time_round_trip(object_type: type[Detector]):
     original = object_type(
@@ -306,6 +363,48 @@ def test_track_copy_preserves_fields_and_independence():
     copied_covariance[0] = 99.0
     assert original_metadata["chips"][0, 0, 0] == 1.0
     assert original_covariance[0] == 1.0
+
+
+def test_track_selection_slices_track_fields():
+    label_time = datetime.datetime(2025, 4, 5, 6, 7, 8)
+    track = Track(
+        name="selected-track",
+        frames=np.array([1, 3, 7]),
+        rows=np.array([15.0, 18.5, 23.25]),
+        columns=np.array([150.5, 154.0, 160.75]),
+        sensor=SENSOR,
+        labels=[{"aircraft"}] * 3,
+        label_times=[label_time] * 3,
+        labelers=["alice"] * 3,
+        extraction_metadata={
+            "chip_size": 1,
+            "chips": np.array([[[1.0]], [[2.0]], [[3.0]]]),
+            "signal_masks": np.array([[[True]], [[False]], [[True]]]),
+            "noise_stds": np.array([0.1, 0.2, 0.3]),
+        },
+        covariance_00=np.array([1.0, 2.0, 3.0]),
+        covariance_01=np.array([0.1, 0.2, 0.3]),
+        covariance_11=np.array([4.0, 5.0, 6.0]),
+    )
+    selection = np.array([2, 0])
+
+    selected = track[selection]
+
+    assert type(selected) is Track
+    np.testing.assert_array_equal(selected.frames, [7, 1])
+    assert selected.labels == [{"aircraft"}, {"aircraft"}]
+    assert selected.label_times == [label_time, label_time]
+    assert selected.labelers == ["alice", "alice"]
+    assert selected.extraction_metadata is not None
+    np.testing.assert_array_equal(selected.extraction_metadata["chips"], [[[3.0]], [[1.0]]])
+    np.testing.assert_array_equal(selected.extraction_metadata["signal_masks"], [[[True]], [[True]]])
+    np.testing.assert_array_equal(selected.extraction_metadata["noise_stds"], [0.3, 0.1])
+    assert selected.covariance_00 is not None
+    assert selected.covariance_01 is not None
+    assert selected.covariance_11 is not None
+    np.testing.assert_array_equal(selected.covariance_00, [3.0, 1.0])
+    np.testing.assert_array_equal(selected.covariance_01, [0.3, 0.1])
+    np.testing.assert_array_equal(selected.covariance_11, [6.0, 4.0])
 
 
 def test_track_label_interface_broadcasts_metadata():
