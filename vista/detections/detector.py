@@ -10,6 +10,7 @@ import pyqtgraph as pg
 from numpy.typing import NDArray
 
 from vista.sensors.sensor import Sensor
+from vista.utils.time_mapping import map_times_to_frames
 
 
 @dataclass
@@ -276,35 +277,63 @@ class Detector:
         return s
 
     @classmethod
-    def from_dataframe(cls, df: pd.DataFrame, sensor, name: str = None):
+    def normalize_dataframe(cls, df: pd.DataFrame, sensor: Sensor, name: str) -> pd.DataFrame:
+        """Normalize temporal coordinates to a ``Frames`` column.
+
+        ``Frames`` takes precedence when both frames and times are present. If
+        only ``Times`` is present, rows outside the sensor's imagery time bounds
+        are removed before the remaining times are mapped to frames.
+
+        The returned DataFrame is an independent copy. Spatial coordinates are
+        intentionally left to the caller: detectors require existing ``Rows``
+        and ``Columns`` columns, while subclasses may derive them.
         """
-        Create Detector from pandas DataFrame.
 
-        Parameters
-        ----------
-        df : pd.DataFrame
-            DataFrame containing detection data with required columns:
-            "Detector", "Frames", "Rows", "Columns"
-        sensor : Sensor
-            Sensor object for these detections
-        name : str, optional
-            Detector name, by default taken from df["Detector"]
+        df = df.copy()
 
-        Returns
-        -------
-        Detector
-            New Detector object
+        # Determine frames - priority: Frames column > time-to-frame mapping
+        if "Frames" in df.columns:
+            frames = df["Frames"].to_numpy()
+        elif "Times" in df.columns:
+            times = pd.to_datetime(df["Times"]).to_numpy()
+            sensor_imagery_frames, sensor_imagery_times = sensor.get_imagery_frames_and_times()
+            if len(sensor_imagery_times) == 0:
+                raise ValueError(
+                    f"{cls.__name__} '{name}' has times but no frames. "
+                    "Sensor imagery times are required for time-to-frame mapping."
+                )
 
-        Notes
-        -----
-        Optional styling columns: "Color", "Marker", "Marker Size",
-        "Line Thickness", "Visible", "Labels"
+            # Eliminate detections outside the time bounds of the selected sensor
+            df = df[(times >= sensor_imagery_times[0]) & (times <= sensor_imagery_times[-1])]
+            if len(df) == 0:
+                raise ValueError(f"{cls.__name__} '{name}' times are not within the bounds of the selected imagery.")
 
-        Labels should be comma-separated strings in the "Labels" column.
-        """
-        if name is None:
-            name = df["Detector"][0]
-        kwargs = {}
+            times = pd.to_datetime(df["Times"]).to_numpy()
+            frames = map_times_to_frames(times, sensor_imagery_times, sensor_imagery_frames)
+        else:
+            raise ValueError(f"{cls.__name__} '{name}' must have either 'Frames' or 'Times' column")
+
+        df["Frames"] = frames
+        return df
+
+    @classmethod
+    def _from_normalized_dataframe(
+        cls,
+        df: pd.DataFrame,
+        sensor,
+        name: str,
+        **additional_kwargs,
+    ):
+        """Construct an instance from normalized frame and pixel coordinates."""
+        from typing import Any
+
+        required_columns = {"Frames", "Rows", "Columns"}
+        missing_columns = required_columns - set(df.columns)
+        if missing_columns:
+            missing = ", ".join(sorted(missing_columns))
+            raise ValueError(f"{cls.__name__} '{name}' is missing required columns: {missing}")
+
+        kwargs: dict[str, Any] = {}
         if "Color" in df.columns:
             kwargs["color"] = df["Color"].iloc[0]
         if "Marker" in df.columns:
@@ -322,7 +351,7 @@ class Detector:
             labels_list = []
             for labels_str in df["Labels"]:
                 if pd.notna(labels_str) and labels_str:
-                    labels_list.append(set(label.strip() for label in labels_str.split(",")))
+                    labels_list.append(set(label.strip() for label in str(labels_str).split(",")))
                 else:
                     labels_list.append(set())
             kwargs["labels"] = labels_list
@@ -346,6 +375,8 @@ class Detector:
                     labelers_list.append(None)
             kwargs["labelers"] = labelers_list
 
+        kwargs.update(additional_kwargs)
+
         detector = cls(
             name=name,
             frames=df["Frames"].to_numpy(),
@@ -361,6 +392,39 @@ class Detector:
             detector._cached_lats = df["Latitude (deg)"].to_numpy(dtype=np.float64)
 
         return detector
+
+    @classmethod
+    def from_dataframe(cls, df: pd.DataFrame, sensor, name: str | None = None):
+        """
+        Create Detector from pandas DataFrame.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            DataFrame containing detection data with required columns:
+            "Detector", "Rows", "Columns", and either "Frames" or "Times"
+        sensor : Sensor
+            Sensor object for these detections
+        name : str, optional
+            Detector name, by default taken from df["Detector"]
+
+        Returns
+        -------
+        Detector
+            New Detector object
+
+        Notes
+        -----
+        Optional styling columns: "Color", "Marker", "Marker Size",
+        "Line Thickness", "Visible", "Labels"
+
+        Labels should be comma-separated strings in the "Labels" column.
+        """
+        if name is None:
+            name = df["Detector"][0]
+
+        df = cls.normalize_dataframe(df, sensor, name)
+        return cls._from_normalized_dataframe(df, sensor, name)
 
     def copy(self):
         """

@@ -111,9 +111,6 @@ class Track(Detector):
     complete: bool = False  # If True, show complete track regardless of current frame and override tail_length
     show_line: bool = True  # If True, show line connecting track points
     line_style: str = "SolidLine"  # Line style: 'SolidLine', 'DashLine', 'DotLine', 'DashDotLine', 'DashDotDotLine'
-    labels: set[str] = field(default_factory=set)  # Set of labels for this track
-    label_time: Optional[datetime.datetime] = None  # UTC timestamp labels were last applied
-    labeler: Optional[str] = None  # Username of the person who last applied labels
     tracker: Optional[str] = None  # Name of tracker this track belongs to
 
     # Extraction metadata
@@ -443,7 +440,47 @@ class Track(Detector):
         return track_times
 
     @classmethod
-    def from_dataframe(cls, df: pd.DataFrame, sensor: Sensor, name: str = None):
+    def normalize_dataframe(cls, df: pd.DataFrame, sensor: Sensor, name: str) -> pd.DataFrame:
+        """Normalize temporal and spatial coordinates for a track.
+
+        Temporal normalization is shared with :class:`Detector`. Tracks extend
+        it by deriving pixel coordinates from geodetic coordinates when rows
+        and columns are not already present.
+        """
+        df = super().normalize_dataframe(df, sensor, name)
+
+        has_geodetic = (
+            "Latitude (deg)" in df.columns and "Longitude (deg)" in df.columns and "Altitude (km)" in df.columns
+        )
+
+        if "Rows" in df.columns and "Columns" in df.columns:
+            return df
+
+        if not has_geodetic:
+            raise ValueError(
+                f"Track '{name}' must have either 'Rows' and 'Columns' columns, "
+                "or 'Latitude', 'Longitude', and 'Altitude' columns"
+            )
+
+        if not sensor.can_geolocate():
+            raise ValueError(
+                f"Track '{name}' has geodetic coordinates (Lat/Lon/Alt) but sensor '{sensor.name}' "
+                "does not support geolocation."
+            )
+
+        rows, columns = map_geodetic_to_pixel(
+            df["Latitude (deg)"].to_numpy(),
+            df["Longitude (deg)"].to_numpy(),
+            df["Altitude (km)"].to_numpy(),
+            df["Frames"].to_numpy(),
+            sensor,
+        )
+        df["Rows"] = rows
+        df["Columns"] = columns
+        return df
+
+    @classmethod
+    def from_dataframe(cls, df: pd.DataFrame, sensor: Sensor, name: str | None = None):
         """
         Create Track from DataFrame with automatic coordinate conversion.
 
@@ -493,159 +530,35 @@ class Track(Detector):
 
         if name is None:
             name = str(df["Track"][0])
+
+        df = cls.normalize_dataframe(df, sensor, name)
+
         kwargs = {}
-        # Parse tracker from dataframe if not provided
         if "Tracker" in df.columns:
             tracker_val = df["Tracker"].iloc[0]
             if pd.notna(tracker_val) and tracker_val:
-                tracker = str(tracker_val)
-                kwargs["tracker"] = tracker
-        if "Color" in df.columns:
-            kwargs["color"] = df["Color"].iloc[0]
-        if "Marker" in df.columns:
-            kwargs["marker"] = df["Marker"].iloc[0]
+                kwargs["tracker"] = str(tracker_val)
         if "Line Width" in df.columns:
             kwargs["line_width"] = df["Line Width"].iloc[0]
-        if "Marker Size" in df.columns:
-            kwargs["marker_size"] = df["Marker Size"].iloc[0]
         if "Tail Length" in df.columns:
             kwargs["tail_length"] = df["Tail Length"].iloc[0]
-        if "Visible" in df.columns:
-            kwargs["visible"] = df["Visible"].iloc[0]
-        if "Complete" in df.columns:
-            kwargs["complete"] = df["Complete"].iloc[0]
         if "Show Line" in df.columns:
             kwargs["show_line"] = df["Show Line"].iloc[0]
         if "Line Style" in df.columns:
             kwargs["line_style"] = df["Line Style"].iloc[0]
-        if "Labels" in df.columns:
-            # Parse labels from comma-separated string
-            labels_str = df["Labels"].iloc[0]
-            if pd.notna(labels_str) and labels_str:
-                labels_str = str(
-                    labels_str
-                )  # Make sure labels are parsed as a string even if they're something like `1`
-                kwargs["labels"] = set(label.strip() for label in labels_str.split(","))
-            else:
-                kwargs["labels"] = set()
-        if "Label Time" in df.columns:
-            label_time_val = df["Label Time"].iloc[0]
-            if pd.notna(label_time_val) and label_time_val != "":
-                try:
-                    kwargs["label_time"] = pd.to_datetime(label_time_val).to_pydatetime()
-                except (ValueError, TypeError):
-                    kwargs["label_time"] = None
-        if "Labeler" in df.columns:
-            labeler_val = df["Labeler"].iloc[0]
-            if pd.notna(labeler_val) and labeler_val != "":
-                kwargs["labeler"] = str(labeler_val)
 
-        # Handle times (optional)
-        times = None
-        if "Times" in df.columns:
-            # Parse times as datetime64
-            times = pd.to_datetime(df["Times"]).to_numpy()
-
-        # Determine frames - priority: Frames column > time-to-frame mapping
-        if "Frames" in df.columns:
-            # Frames take precedence
-            frames = df["Frames"].to_numpy()
-        elif times is not None:
-            sensor_imagery_frames, sensor_imagery_times = sensor.get_imagery_frames_and_times()
-            if len(sensor_imagery_times) == 0:
-                # Times present but no cannot map to frames using sensor - raise error
-                raise ValueError(
-                    f"Track '{name}' has times but no frames. Sensor imagery times are required for time-to-frame mapping."
-                )
-
-            # Eliminate track points before and after the time bounds of the selected sensor
-            df = df[(times >= sensor_imagery_times[0]) & (times <= sensor_imagery_times[-1])]
-            if len(df) == 0:
-                raise ValueError(f"Track '{name}' times are not within the bounds of the selected imagery.")
-            times = pd.to_datetime(df["Times"]).to_numpy()
-
-            # Map times to frames using the sensor imagery
-            frames = map_times_to_frames(times, sensor_imagery_times, sensor_imagery_frames)
-        else:
-            raise ValueError(f"Track '{name}' must have either 'Frames' or 'Times' column")
-
-        # Handle uncertainty data (optional) - covariance matrix elements
-        # Only populate if all three columns exist and all values are valid (not NaN)
+        # Handle uncertainty data only if all three arrays contain finite values.
         if "Covariance 00" in df.columns and "Covariance 01" in df.columns and "Covariance 11" in df.columns:
             cov_00 = df["Covariance 00"].to_numpy(dtype=np.float64)
             cov_01 = df["Covariance 01"].to_numpy(dtype=np.float64)
             cov_11 = df["Covariance 11"].to_numpy(dtype=np.float64)
-
-            # Only set covariance if all values are valid (no NaN or inf)
             if np.all(np.isfinite(cov_00)) and np.all(np.isfinite(cov_01)) and np.all(np.isfinite(cov_11)):
                 kwargs["covariance_00"] = cov_00
                 kwargs["covariance_01"] = cov_01
                 kwargs["covariance_11"] = cov_11
-
-        # Determine rows/columns - priority: Rows/Columns > geodetic-to-pixel mapping
-        has_geodetic = (
-            "Latitude (deg)" in df.columns and "Longitude (deg)" in df.columns and "Altitude (km)" in df.columns
-        )
-        initial_lons = None
-        initial_lats = None
-
-        if "Rows" in df.columns and "Columns" in df.columns:
-            # Row/Column take precedence
-            rows = df["Rows"].to_numpy()
-            columns = df["Columns"].to_numpy()
-            # Preserve geodetic coords if also present (avoids re-projection later)
-            if has_geodetic:
-                initial_lons = df["Longitude (deg)"].to_numpy(dtype=np.float64)
-                initial_lats = df["Latitude (deg)"].to_numpy(dtype=np.float64)
-        elif has_geodetic:
-            # Need geodetic-to-pixel conversion
-            if sensor is None:
-                raise ValueError(
-                    f"Track '{name}' has geodetic coordinates (Lat/Lon/Alt) but no row/column. "
-                    "Sensor required for geodetic-to-pixel mapping."
-                )
-            if not hasattr(sensor, "can_geolocate") or not sensor.can_geolocate():
-                raise ValueError(
-                    f"Track '{name}' has geodetic coordinates (Lat/Lon/Alt) but sensor '{sensor.name}' "
-                    "does not support geolocation."
-                )
-            initial_lons = df["Longitude (deg)"].to_numpy(dtype=np.float64)
-            initial_lats = df["Latitude (deg)"].to_numpy(dtype=np.float64)
-            # Map geodetic to pixel using sensor
-            rows, columns = map_geodetic_to_pixel(
-                df["Latitude (deg)"].to_numpy(),
-                initial_lons,
-                df["Altitude (km)"].to_numpy(),
-                frames,
-                sensor,
-            )
-        else:
-            raise ValueError(
-                f"Track '{name}' must have either 'Rows' and 'Columns' columns, "
-                "or 'Latitude', 'Longitude', and 'Altitude' columns"
-            )
-
-        # Enable show_uncertainty by default if uncertainty data is present
-        if "covariance_00" in kwargs and "covariance_01" in kwargs and "covariance_11" in kwargs:
-            # Only set to True if not already explicitly set
-            if "show_uncertainty" not in kwargs:
                 kwargs["show_uncertainty"] = True
 
-        track = cls(
-            name=name,
-            frames=frames,
-            rows=rows,
-            columns=columns,
-            sensor=sensor,
-            **kwargs,
-        )
-
-        # Pre-populate geodetic cache if coords were available in the dataframe
-        if initial_lons is not None and initial_lats is not None:
-            track._cached_lons = initial_lons
-            track._cached_lats = initial_lats
-
-        return track
+        return super()._from_normalized_dataframe(df, sensor, name, **kwargs)
 
     @property
     def length(self):
@@ -702,8 +615,8 @@ class Track(Detector):
             show_line=self.show_line,
             line_style=self.line_style,
             labels=self.labels.copy(),
-            label_time=self.label_time,
-            labeler=self.labeler,
+            label_times=self.label_times.copy(),
+            labelers=self.labelers.copy(),
             tracker=self.tracker,
             extraction_metadata=extraction_metadata_copy,
             covariance_00=self.covariance_00.copy() if self.covariance_00 is not None else None,
