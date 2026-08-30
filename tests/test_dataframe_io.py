@@ -46,6 +46,14 @@ def assert_init_fields_equal(actual, expected):
         expected_value = getattr(expected, data_field.name)
         if isinstance(expected_value, np.ndarray):
             np.testing.assert_array_equal(actual_value, expected_value)
+        elif isinstance(expected_value, dict):
+            assert actual_value.keys() == expected_value.keys()
+            for key, expected_item in expected_value.items():
+                actual_item = actual_value[key]
+                if isinstance(expected_item, np.ndarray):
+                    np.testing.assert_array_equal(actual_item, expected_item)
+                else:
+                    assert actual_item == expected_item
         else:
             assert actual_value == expected_value, data_field.name
 
@@ -99,6 +107,39 @@ def test_detector_dataframe_round_trip():
     restored = Detector.from_dataframe(original.to_dataframe(), SENSOR)
 
     assert_init_fields_equal(restored, original)
+
+
+def test_detector_copy_preserves_fields_and_independence():
+    original = Detector(
+        name="detector-copy",
+        frames=np.array([2, 4], dtype=np.int64),
+        rows=np.array([12.5, 24.0]),
+        columns=np.array([120.0, 240.25]),
+        sensor=SENSOR,
+        description="copied detector",
+        color="yellow",
+        marker="+",
+        marker_size=17,
+        line_thickness=3,
+        visible=False,
+        complete=True,
+        labels=[{"first"}, {"last"}],
+        label_times=[datetime.datetime(2025, 3, 4, 5, 6, 7), None],
+        labelers=["alice", None],
+    )
+
+    copied = original.copy()
+
+    assert_init_fields_equal(copied, original)
+    assert copied.sensor is original.sensor
+    assert copied.uuid != original.uuid
+    assert copied.frames is not original.frames
+    assert copied.labels[0] is not original.labels[0]
+
+    copied.frames[0] = 99
+    copied.labels[0].add("copy only")
+    assert original.frames[0] == 2
+    assert "copy only" not in original.labels[0]
 
 
 @pytest.mark.parametrize("object_type", [Detector, Track])
@@ -181,6 +222,66 @@ def test_track_dataframe_round_trip():
     restored = Track.from_dataframe(original.to_dataframe(), SENSOR)
 
     assert_init_fields_equal(restored, original)
+
+
+def test_track_copy_preserves_fields_and_independence():
+    original = Track(
+        name="track-copy",
+        frames=np.array([1, 3], dtype=np.int64),
+        rows=np.array([15.0, 18.5]),
+        columns=np.array([150.5, 154.0]),
+        sensor=SENSOR,
+        description="copied track",
+        color="blue",
+        marker="s",
+        marker_size=14,
+        line_thickness=7,
+        visible=False,
+        complete=True,
+        labels=[{"aircraft", "review"}] * 2,
+        label_times=[datetime.datetime(2025, 4, 5, 6, 7, 8)] * 2,
+        labelers=["alice"] * 2,
+        line_width=6,
+        tail_length=12,
+        show_line=False,
+        line_style="DotLine",
+        tracker="copy-tracker",
+        extraction_metadata={
+            "chip_size": 1,
+            "chips": np.array([[[1.0]], [[2.0]]]),
+            "signal_masks": np.array([[[True]], [[False]]]),
+            "noise_stds": np.array([0.1, 0.2]),
+        },
+        covariance_00=np.array([1.0, 2.0]),
+        covariance_01=np.array([0.1, 0.2]),
+        covariance_11=np.array([4.0, 5.0]),
+        show_uncertainty=True,
+    )
+
+    copied = original.copy()
+
+    assert_init_fields_equal(copied, original)
+    assert type(copied) is Track
+    assert copied.sensor is original.sensor
+    assert copied.uuid != original.uuid
+    assert copied.labels[0] is not original.labels[0]
+    assert copied.extraction_metadata is not original.extraction_metadata
+    assert copied.covariance_00 is not original.covariance_00
+
+    copied_metadata = copied.extraction_metadata
+    original_metadata = original.extraction_metadata
+    copied_covariance = copied.covariance_00
+    original_covariance = original.covariance_00
+    assert copied_metadata is not None
+    assert original_metadata is not None
+    assert copied_covariance is not None
+    assert original_covariance is not None
+    assert copied_metadata["chips"] is not original_metadata["chips"]
+
+    copied_metadata["chips"][0, 0, 0] = 99.0
+    copied_covariance[0] = 99.0
+    assert original_metadata["chips"][0, 0, 0] == 1.0
+    assert original_covariance[0] == 1.0
 
 
 def test_track_label_interface_broadcasts_metadata():

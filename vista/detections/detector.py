@@ -462,30 +462,26 @@ class Detector:
         df = cls.normalize_dataframe(df, sensor, name)
         return cls._from_normalized_dataframe(df, sensor, name)
 
-    def copy(self):
-        """
-        Create a deep copy of this detector object.
-
-        Returns
-        -------
-        Detector
-            New Detector object with copied arrays and styling attributes
-        """
-        detector_copy = self.__class__(
+    def copy(self) -> Self:
+        """Return an independent copy that retains the same sensor."""
+        detector_copy = type(self)(
             name=self.name,
             frames=self.frames.copy(),
             rows=self.rows.copy(),
             columns=self.columns.copy(),
             sensor=self.sensor,
+            description=self.description,
             color=self.color,
             marker=self.marker,
             marker_size=self.marker_size,
             line_thickness=self.line_thickness,
             visible=self.visible,
+            complete=self.complete,
             labels=[label_set.copy() for label_set in self.labels],
-            label_times=list(self.label_times),
-            labelers=list(self.labelers),
+            label_times=self.label_times.copy(),
+            labelers=self.labelers.copy(),
         )
+
         # Preserve cached geodetic coords
         if self._cached_lons is not None:
             detector_copy._cached_lons = self._cached_lons.copy()

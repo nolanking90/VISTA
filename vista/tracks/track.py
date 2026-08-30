@@ -7,8 +7,9 @@ time-based), visualization styling, and data persistence.
 """
 
 import datetime
+from copy import deepcopy
 from dataclasses import field
-from typing import Annotated, Optional
+from typing import Annotated, Optional, Self
 
 import numpy as np
 import pandas as pd
@@ -521,53 +522,19 @@ class Track(Detector):
                 self._length = np.sum(np.sqrt(np.diff(self.rows) ** 2 + np.diff(self.columns) ** 2))
         return self._length
 
-    def copy(self):
-        """
-        Create a deep copy of this track object.
-
-        Returns
-        -------
-        Track
-            New Track object with copied arrays and styling attributes
-        """
-        # Deep copy extraction metadata if present
-        extraction_metadata_copy = None
-        if self.extraction_metadata is not None:
-            extraction_metadata_copy = {
-                "chip_size": self.extraction_metadata["chip_size"],
-                "chips": self.extraction_metadata["chips"].copy(),
-                "signal_masks": self.extraction_metadata["signal_masks"].copy(),
-                "noise_stds": self.extraction_metadata["noise_stds"].copy(),
-            }
-
-        track_copy = self.__class__(
-            name=self.name,
-            frames=self.frames.copy(),
-            rows=self.rows.copy(),
-            columns=self.columns.copy(),
-            sensor=self.sensor,
-            color=self.color,
-            marker=self.marker,
-            line_width=self.line_width,
-            marker_size=self.marker_size,
-            visible=self.visible,
-            tail_length=self.tail_length,
-            complete=self.complete,
-            show_line=self.show_line,
-            line_style=self.line_style,
-            tracker=self.tracker,
-            extraction_metadata=extraction_metadata_copy,
-            covariance_00=self.covariance_00.copy() if self.covariance_00 is not None else None,
-            covariance_01=self.covariance_01.copy() if self.covariance_01 is not None else None,
-            covariance_11=self.covariance_11.copy() if self.covariance_11 is not None else None,
-            show_uncertainty=self.show_uncertainty,
-        )
-        track_copy.set_label(self.label, self.label_time, self.labeler)
-        # Preserve cached geodetic coords
-        if self._cached_lons is not None:
-            track_copy._cached_lons = self._cached_lons.copy()
-        if self._cached_lats is not None:
-            track_copy._cached_lats = self._cached_lats.copy()
+    def copy(self) -> Self:
+        """Return a copy with Track-specific fields copied onto the shared Detector copy."""
+        track_copy = super().copy()
+        track_copy.line_width = self.line_width
+        track_copy.tail_length = self.tail_length
+        track_copy.show_line = self.show_line
+        track_copy.line_style = self.line_style
+        track_copy.tracker = self.tracker
+        track_copy.extraction_metadata = deepcopy(self.extraction_metadata)
+        track_copy.covariance_00 = self.covariance_00.copy() if self.covariance_00 is not None else None
+        track_copy.covariance_01 = self.covariance_01.copy() if self.covariance_01 is not None else None
+        track_copy.covariance_11 = self.covariance_11.copy() if self.covariance_11 is not None else None
+        track_copy.show_uncertainty = self.show_uncertainty
         return track_copy
 
     def to_dataframe(self) -> pd.DataFrame:
