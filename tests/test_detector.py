@@ -3,6 +3,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 from helpers import assert_constructor_fields_equal
 
 from vista.detections.detector import Detector
@@ -121,3 +122,25 @@ def test_frames_take_precedence(sensor: Sensor):
     detector = Detector.from_dataframe(dataframe, sensor)
 
     np.testing.assert_array_equal(detector.frames, [5, 9])
+
+
+@pytest.mark.parametrize(
+    ("times", "use_timed_sensor", "message"),
+    [
+        (None, False, "must have either 'Frames' or 'Times'"),
+        (["2025-01-02T03:04:05"], False, "Sensor imagery times are required"),
+        (["2024-01-02T03:04:05"], True, "times are not within the bounds"),
+    ],
+)
+def test_invalid_time_dataframe(times, use_timed_sensor, message, sensor: Sensor, timed_sensor: Sensor):
+    data = {
+        "Detector": ["invalid-times"],
+        "Rows": [10.0],
+        "Columns": [100.0],
+    }
+    if times is not None:
+        data["Times"] = times
+    selected_sensor = timed_sensor if use_timed_sensor else sensor
+
+    with pytest.raises(ValueError, match=message):
+        Detector.from_dataframe(pd.DataFrame(data), selected_sensor)
