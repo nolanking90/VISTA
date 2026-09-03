@@ -105,3 +105,19 @@ def test_time_round_trip(timed_sensor: Sensor):
         "2025-01-02T03:04:07.000000",
     ]
     assert_constructor_fields_equal(detector, expected)
+
+
+def test_frames_take_precedence(sensor: Sensor):
+    dataframe = pd.DataFrame(
+        {
+            "Detector": ["frames-first", "frames-first"],
+            "Frames": [5, 9],
+            "Times": ["not a time", "also not a time"],
+            "Rows": [10.0, 20.0],
+            "Columns": [100.0, 200.0],
+        }
+    )
+
+    detector = Detector.from_dataframe(dataframe, sensor)
+
+    np.testing.assert_array_equal(detector.frames, [5, 9])
