@@ -173,6 +173,21 @@ class Detector:
         self._cached_lats = lats
         return self._cached_lons, self._cached_lats
 
+    def get_times(self) -> Optional[NDArray[np.datetime64]]:
+        """Return imagery timestamps corresponding to each frame, or ``None`` if unavailable."""
+        sensor_frames, sensor_times = self.sensor.get_imagery_frames_and_times()
+        if len(sensor_times) == 0:
+            return None
+
+        indices = np.searchsorted(sensor_frames, self.frames)
+        times = np.full(len(self.frames), np.datetime64("NaT"), dtype="datetime64[ns]")
+
+        in_bounds = indices < len(sensor_frames)
+        clipped = np.minimum(indices, len(sensor_frames) - 1)
+        valid = in_bounds & (sensor_frames[clipped] == self.frames)
+        times[valid] = sensor_times[indices[valid]]
+        return times
+
     def invalidate_caches(self):
         """Invalidate cached data structures when detector data changes."""
         self._frame_index = None

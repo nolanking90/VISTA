@@ -62,3 +62,23 @@ def test_dataframe_round_trip(sensor: Sensor):
     detector = Detector.from_dataframe(expected.to_dataframe(), sensor)
 
     assert_constructor_fields_equal(detector, expected)
+
+
+def test_get_times(timed_sensor: Sensor):
+    detector = Detector(
+        name="timed-detector",
+        frames=np.array([2, 3, 8]),
+        rows=np.array([12.5, 24.0, 48.75]),
+        columns=np.array([120.0, 240.25, 480.5]),
+        sensor=timed_sensor,
+    )
+
+    times = detector.get_times()
+
+    np.testing.assert_array_equal(
+        times,
+        np.array(
+            ["2025-01-02T03:04:05", "NaT", "2025-01-02T03:04:07"],
+            dtype="datetime64[ns]",
+        ),
+    )
