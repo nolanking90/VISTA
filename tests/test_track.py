@@ -1,4 +1,5 @@
 import datetime
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -246,6 +247,81 @@ def test_track_rejects_per_point_label_metadata(sensor: Sensor):
         make_track(label_times=[label_time, None])
     with pytest.raises(ValueError, match="Track labelers must be identical"):
         make_track(labelers=["alice", "bob"])
+
+
+def test_track_dataframe_coerces_label_metadata(sensor: Sensor):
+    track = Track.from_dataframe(
+        pd.DataFrame(
+            {
+                "Track": ["metadata"],
+                "Frames": [1],
+                "Rows": [10.0],
+                "Columns": [100.0],
+                "Labels": [1],
+                "Label Time": ["06/07/2025 08:09"],
+                "Labeler": [123],
+            }
+        ),
+        sensor,
+    )
+
+    assert track.labels == [{"1"}]
+    assert track.label_times == [datetime.datetime(2025, 6, 7, 8, 9)]
+    assert track.labelers == ["123"]
+
+
+def test_track_dataframe_treats_invalid_label_time_as_missing(sensor: Sensor):
+    track = Track.from_dataframe(
+        pd.DataFrame(
+            {
+                "Track": ["metadata"],
+                "Frames": [1],
+                "Rows": [10.0],
+                "Columns": [100.0],
+                "Label Time": ["not a time"],
+            }
+        ),
+        sensor,
+    )
+
+    assert track.label_times == [None]
+
+
+def test_track_dataframe_preserves_imported_geodetic_coordinates(sensor: Sensor):
+    track = Track.from_dataframe(
+        pd.DataFrame(
+            {
+                "Track": ["geodetic", "geodetic"],
+                "Frames": [1, 2],
+                "Rows": [10.0, 20.0],
+                "Columns": [100.0, 200.0],
+                "Latitude (deg)": [39.0, 40.0],
+                "Longitude (deg)": [-105.0, -104.0],
+                "Altitude (km)": [1.0, 2.0],
+            }
+        ),
+        sensor,
+    )
+
+    exported = track.to_dataframe()
+
+    np.testing.assert_array_equal(exported["Latitude (deg)"], [39.0, 40.0])
+    np.testing.assert_array_equal(exported["Longitude (deg)"], [-105.0, -104.0])
+
+
+def test_track_dataframe_requires_sensor_for_geodetic_conversion():
+    dataframe = pd.DataFrame(
+        {
+            "Track": ["geodetic"],
+            "Frames": [1],
+            "Latitude (deg)": [39.0],
+            "Longitude (deg)": [-105.0],
+            "Altitude (km)": [1.0],
+        }
+    )
+
+    with pytest.raises(ValueError, match="Sensor required for geodetic-to-pixel mapping"):
+        Track.from_dataframe(dataframe, cast(Sensor, None))
 
 
 def test_track_dataframe_time_round_trip(timed_sensor: Sensor):

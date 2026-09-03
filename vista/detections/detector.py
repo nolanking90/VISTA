@@ -1,6 +1,7 @@
 import datetime
 import pathlib
 import uuid as uuid_module
+from collections.abc import Iterable
 from dataclasses import field, fields
 from typing import TYPE_CHECKING, Annotated, ClassVar, Optional, Self, Union
 
@@ -374,10 +375,24 @@ class Detector:
             raise ValueError(f"{cls.__name__} '{name}' must have either 'Frames' or 'Times' column")
 
         df["Frames"] = frames
-        for column in ("Label Time", "Labeler"):
-            if column in df.columns:
-                values = df[column].astype(object)
-                df[column] = values.where(values.notna() & values.ne(""), None)
+        if "Labels" in df.columns:
+            df["Labels"] = [
+                value if value is None or isinstance(value, Iterable) or pd.isna(value) else str(value)
+                for value in df["Labels"]
+            ]
+        if "Label Time" in df.columns:
+            label_times = pd.to_datetime(df["Label Time"], format="mixed", errors="coerce")
+            df["Label Time"] = pd.Series(
+                [value.to_pydatetime() if pd.notna(value) else None for value in label_times],
+                index=df.index,
+                dtype=object,
+            )
+        if "Labeler" in df.columns:
+            df["Labeler"] = pd.Series(
+                [None if pd.isna(value) or value == "" else str(value) for value in df["Labeler"]],
+                index=df.index,
+                dtype=object,
+            )
         return df
 
     @classmethod

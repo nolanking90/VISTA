@@ -9,6 +9,7 @@ from pytestqt.qtbot import QtBot
 
 from vista.detections.detector import Detector
 from vista.sensors import Sensor
+from vista.widgets.core.data.data_loader import DataLoaderThread
 from vista.widgets.core.imagery_viewer import ImageryViewer
 
 
@@ -251,6 +252,64 @@ def test_deleting_detection_removes_only_its_labels(sensor: Sensor, imagery_view
     assert edited.labels == [{"second"}]
     assert edited.label_times == [datetime.datetime(2025, 1, 2)]
     assert edited.labelers == ["bob"]
+
+
+def test_detector_dataframe_coerces_label_metadata(sensor: Sensor):
+    detector = Detector.from_dataframe(
+        pd.DataFrame(
+            {
+                "Detector": ["metadata"],
+                "Frames": [1],
+                "Rows": [10.0],
+                "Columns": [100.0],
+                "Labels": [1],
+                "Label Time": ["06/07/2025 08:09"],
+                "Labeler": [123],
+            }
+        ),
+        sensor,
+    )
+
+    assert detector.labels == [{"1"}]
+    assert detector.label_times == [datetime.datetime(2025, 6, 7, 8, 9)]
+    assert detector.labelers == ["123"]
+
+
+def test_detector_dataframe_treats_invalid_label_time_as_missing(sensor: Sensor):
+    detector = Detector.from_dataframe(
+        pd.DataFrame(
+            {
+                "Detector": ["metadata"],
+                "Frames": [1],
+                "Rows": [10.0],
+                "Columns": [100.0],
+                "Label Time": ["not a time"],
+            }
+        ),
+        sensor,
+    )
+
+    assert detector.label_times == [None]
+
+
+def test_detection_csv_loader_converts_numeric_names_to_strings(tmp_path, sensor: Sensor):
+    csv_path = tmp_path / "numeric-detector.csv"
+    pd.DataFrame(
+        {
+            "Detector": [101, 101],
+            "Frames": [1, 2],
+            "Rows": [10.0, 20.0],
+            "Columns": [100.0, 200.0],
+        }
+    ).to_csv(csv_path, index=False)
+    loaded_detectors = []
+    loader = DataLoaderThread(csv_path, "detections", "csv", sensor=sensor)
+    loader.detectors_loaded.connect(loaded_detectors.extend)
+
+    loader.run()
+
+    assert len(loaded_detectors) == 1
+    assert loaded_detectors[0].name == "101"
 
 
 def test_detector_dataframe_time_round_trip(timed_sensor: Sensor):

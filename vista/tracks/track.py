@@ -374,6 +374,12 @@ class Track(Detector):
                 "or 'Latitude', 'Longitude', and 'Altitude' columns"
             )
 
+        if sensor is None:
+            raise ValueError(
+                f"Track '{name}' has geodetic coordinates (Lat/Lon/Alt) but no row/column. "
+                "Sensor required for geodetic-to-pixel mapping."
+            )
+
         if not sensor.can_geolocate():
             raise ValueError(
                 f"Track '{name}' has geodetic coordinates (Lat/Lon/Alt) but sensor '{sensor.name}' "
@@ -509,9 +515,13 @@ class Track(Detector):
             df["Latitude (deg)"] = lats
             df["Altitude (km)"] = np.asarray(locations.height.to("km").value, dtype=np.float64)
         else:
-            # Sensor cannot geolocate - fill with NaN
-            df["Latitude (deg)"] = np.full(len(self.frames), np.nan)
-            df["Longitude (deg)"] = np.full(len(self.frames), np.nan)
+            geodetic = self.get_geodetic_coords()
+            if geodetic is not None:
+                df["Longitude (deg)"] = geodetic[0]
+                df["Latitude (deg)"] = geodetic[1]
+            else:
+                df["Latitude (deg)"] = np.full(len(self.frames), np.nan)
+                df["Longitude (deg)"] = np.full(len(self.frames), np.nan)
             df["Altitude (km)"] = np.full(len(self.frames), np.nan)
 
         # Include extraction metadata if present

@@ -494,7 +494,7 @@ class DataLoaderThread(QThread):
             for idx, (detector_name, group_df) in enumerate(detector_groups):
                 if self._cancelled:
                     return  # Exit early if cancelled
-                detector = Detector.from_dataframe(group_df, sensor=self.sensor, name=detector_name)
+                detector = Detector.from_dataframe(group_df, sensor=self.sensor, name=str(detector_name))
                 detectors.append(detector)
                 self.progress_updated.emit("Loading detections...", idx + 1, len(detector_groups))
         else:
