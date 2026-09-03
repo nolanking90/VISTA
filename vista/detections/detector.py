@@ -10,6 +10,7 @@ import pyqtgraph as pg
 from numpy.typing import NDArray
 
 from vista.sensors.sensor import Sensor
+from vista.utils.time_mapping import map_times_to_frames
 
 
 @dataclass
@@ -290,6 +291,31 @@ class Detector:
         return s
 
     @classmethod
+    def normalize_dataframe(cls, df: pd.DataFrame, sensor: Sensor, name: str) -> pd.DataFrame:
+        """Return a dataframe with times mapped to frames when frames are absent."""
+
+        if "Frames" in df.columns:
+            return df
+        if "Times" not in df.columns:
+            raise ValueError(f"{cls.__name__} '{name}' must have either 'Frames' or 'Times' column")
+
+        times = pd.to_datetime(df["Times"]).to_numpy()
+        sensor_frames, sensor_times = sensor.get_imagery_frames_and_times()
+        if len(sensor_times) == 0:
+            raise ValueError(
+                f"{cls.__name__} '{name}' has times but no frames. "
+                "Sensor imagery times are required for time-to-frame mapping."
+            )
+
+        in_bounds = (times >= sensor_times[0]) & (times <= sensor_times[-1])
+        df = df.loc[in_bounds].copy()
+        if len(df) == 0:
+            raise ValueError(f"{cls.__name__} '{name}' times are not within the bounds of the selected imagery.")
+
+        df["Frames"] = map_times_to_frames(times[in_bounds], sensor_times, sensor_frames)
+        return df
+
+    @classmethod
     def from_dataframe(cls, df: pd.DataFrame, sensor, name: str = None):
         """
         Create Detector from pandas DataFrame.
@@ -298,7 +324,7 @@ class Detector:
         ----------
         df : pd.DataFrame
             DataFrame containing detection data with required columns:
-            "Detector", "Frames", "Rows", "Columns"
+            "Detector", "Rows", "Columns", and either "Frames" or "Times"
         sensor : Sensor
             Sensor object for these detections
         name : str, optional
@@ -318,6 +344,7 @@ class Detector:
         """
         if name is None:
             name = df["Detector"][0]
+        df = cls.normalize_dataframe(df, sensor, name)
         kwargs = {}
         if "Color" in df.columns:
             kwargs["color"] = df["Color"].iloc[0]
@@ -429,7 +456,7 @@ class Detector:
             else:
                 labelers_column.append("")
 
-        return pd.DataFrame(
+        df = pd.DataFrame(
             {
                 "Detector": len(self) * [self.name],
                 "Frames": self.frames,
@@ -446,6 +473,12 @@ class Detector:
                 "Labeler": labelers_column,
             }
         )
+
+        times = self.get_times()
+        if times is not None:
+            df["Times"] = pd.to_datetime(times).strftime("%Y-%m-%dT%H:%M:%S.%f")
+
+        return df
 
     def get_unique_labels(self) -> set[str]:
         """

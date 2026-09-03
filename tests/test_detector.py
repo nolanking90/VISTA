@@ -82,3 +82,26 @@ def test_get_times(timed_sensor: Sensor):
             dtype="datetime64[ns]",
         ),
     )
+
+
+def test_time_round_trip(timed_sensor: Sensor):
+    expected = Detector(
+        name="time-round-trip",
+        frames=np.array([2, 4, 8]),
+        rows=np.array([12.5, 24.0, 48.75]),
+        columns=np.array([120.0, 240.25, 480.5]),
+        sensor=timed_sensor,
+        labels=[set(), set(), set()],
+        label_times=[None, None, None],
+        labelers=[None, None, None],
+    )
+
+    dataframe = expected.to_dataframe()
+    detector = Detector.from_dataframe(dataframe.drop(columns="Frames"), timed_sensor)
+
+    assert dataframe["Times"].tolist() == [
+        "2025-01-02T03:04:05.000000",
+        "2025-01-02T03:04:06.000000",
+        "2025-01-02T03:04:07.000000",
+    ]
+    assert_constructor_fields_equal(detector, expected)
